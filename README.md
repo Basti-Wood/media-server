@@ -116,7 +116,7 @@ which apps are up or down, the VPN state and public IP, and these settings:
 Use an SSH tunnel for initial setup if these apps are not running on your desktop:
 
 ```sh
-ssh -L 8096:127.0.0.1:8096 -L 8989:127.0.0.1:8989 -L 7878:127.0.0.1:7878 -L 9696:127.0.0.1:9696 -L 8080:127.0.0.1:8080 your-server
+ssh -L 8096:127.0.0.1:8096 -L 8989:127.0.0.1:8989 -L 7878:127.0.0.1:7878 -L 9696:127.0.0.1:9696 your-server
 ```
 
 If `JELLYFIN_BIND_IP` is your LAN IP, open that address instead. Open

@@ -342,8 +342,6 @@ services:
     volumes:
     - ./provision/gluetun:/gluetun
     - ./provision/vpn:/run/secrets:ro
-    ports:
-    - 127.0.0.1:8080:8080
     restart: unless-stopped
     networks:
     - media-network
