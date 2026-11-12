@@ -318,7 +318,7 @@ services:
     profiles:
     - extras
   gluetun:
-    image: qmcgaw/gluetun:v3.40.0
+    image: qmcgaw/gluetun:v3.41.3
     cap_add:
     - NET_ADMIN
     devices:
