@@ -41,9 +41,11 @@ by hand in the Jellyfin player can override the preference for that title.
 
 ## First installation
 
-Requires Linux Docker Engine, the Compose plugin **v2.20+**, Python 3, a Surfshark
-subscription, and your own media/sources. Do this on the machine hosting the
-server. No VPN credentials or Jellyfin API keys belong in GitHub or in chat.
+Requires Linux Docker Engine, Docker Compose **v2.20+** (the `docker compose` plugin
+or the standalone `docker-compose`; the scripts use whichever is installed, and the
+commands below work with either spelling), Python 3, a Surfshark subscription, and
+your own media/sources. Do this on the machine hosting the server. No VPN
+credentials or Jellyfin API keys belong in GitHub or in chat.
 
 ### 1. Configure the server address and VPN
 

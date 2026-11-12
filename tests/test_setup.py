@@ -64,6 +64,25 @@ class SetupTests(unittest.TestCase):
                     self.assertRaisesRegex(ValueError, 'sudo chown -R "\\$USER": provision/authelia$'):
                 setup.check_owner(root)
 
+    def test_example_files_from_authelia_are_set_aside_and_replaced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'deploy').mkdir()
+            (root / 'deploy/authelia.template.yml').write_text((ROOT / 'deploy/authelia.template.yml').read_text())
+            (root / '.env').write_text('MEDIA_DOMAIN=media.example.com\n')
+            folder = root / 'provision/authelia'
+            folder.mkdir(parents=True)
+            (folder / 'configuration.yml').write_text('# Authelia example\n')
+            (folder / 'users_database.yml').write_text('users: {}\n')
+            with patch.object(setup, 'ROOT', root), patch('sys.argv', ['setup.py']), patch.object(setup.os, 'umask'), \
+                    patch('builtins.input', side_effect=['admin', 'admin@example.com']), \
+                    patch.object(setup.getpass, 'getpass', return_value=DIGEST):
+                setup.main()
+                self.assertIn('media_session', (folder / 'configuration.yml').read_text())
+                self.assertEqual((folder / 'configuration.yml.authelia-example').read_text(), '# Authelia example\n')
+                with patch('builtins.input', side_effect=AssertionError('asked again')):
+                    setup.main()
+
     def test_domain_injection_rejected(self):
         for value in ['localhost', 'example.com', 'x\npolicy: bypass', 'media.*.com', 'media.bad-.com']:
             with self.assertRaises(ValueError):
