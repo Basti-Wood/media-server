@@ -75,6 +75,10 @@ The first run asks for your admin login. It tells you how to generate an Argon2
 password hash with Authelia; paste the digest. It creates private, ignored config
 files and secrets and never overwrites an existing account. Then it builds and
 starts every service. Run it again any time; it is safe to repeat.
+Run it before the first `docker compose up`: otherwise Docker creates
+`provision/vpn` and `provision/portal` as root and the portal cannot save settings
+(setup then prints the `sudo chown` command that fixes it). Set `PUID`/`PGID` in
+`.env` to your own user (`id -u`, `id -g`).
 
 qBittorrent starts too, but stays offline until you connect Surfshark: the VPN's
 firewall blocks all its traffic. Compose prints a warning that the optional

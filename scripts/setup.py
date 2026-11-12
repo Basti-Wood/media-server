@@ -74,7 +74,11 @@ def vpn_files(root, owner=None):
     settings = root / 'provision/portal'
     for path in (folder, settings):
         path.mkdir(parents=True, exist_ok=True)
-        path.chmod(0o700)
+        try:
+            path.chmod(0o700)
+        except PermissionError:
+            raise ValueError(f'{path.relative_to(root)} belongs to root: Docker created it because the stack started before '
+                             'setup. Fix it, then run ./start.sh again:\n  sudo chown -R "$USER": provision/vpn provision/portal') from None
     key_file = folder / 'control.key'
     if not key_file.exists():
         with key_file.open('x') as f:

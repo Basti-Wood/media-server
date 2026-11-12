@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,6 +52,11 @@ class SetupTests(unittest.TestCase):
             setup.vpn_files(root)
             self.assertEqual((vpn / 'control.key').read_text(), key)
             self.assertEqual((vpn / 'openvpn_user').read_text(), 'real')
+
+    def test_folder_created_by_docker_as_root_gives_the_fix(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(Path, 'chmod', side_effect=PermissionError):
+            with self.assertRaisesRegex(ValueError, 'sudo chown'):
+                setup.vpn_files(Path(tmp))
 
     def test_domain_injection_rejected(self):
         for value in ['localhost', 'example.com', 'x\npolicy: bypass', 'media.*.com', 'media.bad-.com']:
