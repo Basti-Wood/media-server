@@ -19,7 +19,9 @@ def inspect():
     disk = shutil.disk_usage(ROOT / 'content' if (ROOT / 'content').exists() else ROOT)
     if disk.free < max(10 * 1024 ** 3, disk.total * 0.1):
         problems.append('Media storage is low: less than 10 GiB or 10% free.')
-    result = subprocess.run(['docker', 'compose', 'ps', '--all', '--format', 'json'], cwd=ROOT, capture_output=True, text=True, check=True)
+    # Compose plugin (docker compose) or the standalone tool (docker-compose), whichever is installed.
+    compose = ['docker', 'compose'] if subprocess.run(['docker', 'compose', 'version'], capture_output=True).returncode == 0 else ['docker-compose']
+    result = subprocess.run([*compose, 'ps', '--all', '--format', 'json'], cwd=ROOT, capture_output=True, text=True, check=True)
     raw = result.stdout.strip()
     rows = json.loads(raw) if raw.startswith('[') else [json.loads(line) for line in raw.splitlines() if line]
     if not rows:

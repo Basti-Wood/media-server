@@ -115,9 +115,17 @@ def main():
     domain = validate_domain(env.get('MEDIA_DOMAIN', ''))
     check_owner(ROOT)
     vpn_files(ROOT, (int(env.get('PUID', 1000)), int(env.get('PGID', 1000))) if os.geteuid() == 0 else None)
-    if (ROOT / 'provision/authelia/configuration.yml').exists():
-        print('Authentication is already configured.')
-        return
+    folder = ROOT / 'provision/authelia'
+    try:
+        if 'media_session' in (folder / 'configuration.yml').read_text():
+            print('Authentication is already configured.')
+            return
+    except OSError:
+        pass
+    # Authelia writes its own example files when it starts before setup; keep them aside.
+    for name in ('configuration.yml', 'users_database.yml'):
+        if (folder / name).exists():
+            (folder / name).rename(folder / (name + '.authelia-example'))
     print('Generate a password hash in another terminal (your password stays local):')
     print('docker run --rm -it authelia/authelia:4.39.28 authelia crypto hash generate argon2')
     username = input('Login username: ').strip()
