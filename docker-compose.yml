@@ -319,6 +319,12 @@ services:
     - extras
   gluetun:
     image: qmcgaw/gluetun:v3.41.3
+    # Some Docker versions attach the network a moment after start; Gluetun checks it at once
+    # and exits with "default route not found". Wait up to 30 s for it first.
+    entrypoint:
+    - /bin/sh
+    - -c
+    - 'i=0; until ip route | busybox grep -q "^default" || [ $$i -ge 30 ]; do i=$$((i+1)); busybox sleep 1; done; echo "waited $${i}s for the network"; exec /gluetun-entrypoint'
     cap_add:
     - NET_ADMIN
     devices:
