@@ -39,8 +39,14 @@ const assert = require('node:assert/strict');
     assert.ok((await page.locator('#search').boundingBox()).width > 180, 'Mobile search field must remain usable');
     await page.screenshot({ path: 'browser-mobile.png', fullPage: true });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.getByRole('link', { name: 'Admin' }).click();
+    await page.getByRole('heading', { name: 'Surfshark VPN' }).waitFor();
+    await page.getByText('Sources (Prowlarr) · down').waitFor();
+    await page.getByRole('link', { name: 'Watch' }).waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: 'browser-admin.png', fullPage: true });
     assert.deepEqual(errors, []);
-    console.log('Browser checks passed: language states, Japanese subtitles, saving languages, Jellyfin link, remembered choice, mobile layout.');
+    console.log('Browser checks passed: language states, Japanese subtitles, saving languages, Jellyfin link, remembered choice, mobile layout, admin page.');
   } finally {
     if (browser) await browser.close();
     fixture.kill();

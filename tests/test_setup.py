@@ -36,15 +36,21 @@ class SetupTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 setup.generate(root, 'media.home.arpa', 'admin', DIGEST, 'admin@example.com')
 
-    def test_vpn_files_share_one_key_and_are_kept(self):
+    def test_vpn_files_share_one_key_and_keep_credentials(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             setup.vpn_files(root)
-            key = (root / 'provision/vpn/control.key').read_text()
+            vpn = root / 'provision/vpn'
+            key = (vpn / 'control.key').read_text()
             self.assertIn(f'apikey = "{key}"', (root / 'provision/gluetun/auth/config.toml').read_text())
-            self.assertEqual((root / 'provision/vpn').stat().st_mode & 0o777, 0o700)
+            self.assertIn('"GET /v1/vpn/settings"', (root / 'provision/gluetun/auth/config.toml').read_text())
+            for folder in (vpn, root / 'provision/portal'):
+                self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
+            self.assertEqual((vpn / 'openvpn_user').read_text(), setup.PLACEHOLDER)
+            (vpn / 'openvpn_user').write_text('real')
             setup.vpn_files(root)
-            self.assertEqual((root / 'provision/vpn/control.key').read_text(), key)
+            self.assertEqual((vpn / 'control.key').read_text(), key)
+            self.assertEqual((vpn / 'openvpn_user').read_text(), 'real')
 
     def test_domain_injection_rejected(self):
         for value in ['localhost', 'example.com', 'x\npolicy: bypass', 'media.*.com', 'media.bad-.com']:
@@ -97,11 +103,14 @@ class ComposeTests(unittest.TestCase):
         self.assertNotIn('networks', q)
         self.assertNotIn('ports', q)
         self.assertEqual(q['depends_on']['gluetun']['condition'], 'service_healthy')
+        # Optional only so the stack starts before Surfshark is connected; the firewall still blocks.
+        self.assertFalse(q['depends_on']['gluetun']['required'])
         self.assertEqual(self.services['gluetun']['environment']['FIREWALL'], 'on')
 
     def test_portal_and_authentication_are_not_published(self):
         for key in ['portal', 'authelia', 'redis']:
             self.assertNotIn('ports', self.services[key])
+        self.assertEqual(self.services['caddy']['ports'], ['${CADDY_BIND_IP:-127.0.0.1}:80:80'])
         self.assertTrue(self.stack['networks']['auth-network']['internal'])
 
     def test_admin_ports_are_loopback_only(self):

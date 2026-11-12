@@ -47,6 +47,7 @@ class FixtureJellyfin(RealJellyfin):
 class FixtureHandler(app.Handler):
     def handle_request(self, write):
         self.headers['Remote-User'] = 'browser-test'
+        self.headers['Remote-Groups'] = 'admins'
         return super().handle_request(write)
 
 

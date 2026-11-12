@@ -118,14 +118,13 @@ class SelectionTests(unittest.TestCase):
                 app.ident(value)
 
     def test_missing_api_key_is_configuration_error(self):
-        with patch.dict(os.environ, {'JELLYFIN_API_KEY': '', 'JELLYFIN_USER': 'me'}):
-            with self.assertRaises(app.UpstreamError):
-                app.Jellyfin().request('/Users')
+        with self.assertRaises(app.UpstreamError):
+            app.Jellyfin('', 'me').request('/Users')
 
     def test_api_key_sent_in_authorization_header(self):
-        with patch.dict(os.environ, {'JELLYFIN_API_KEY': 'k', 'JELLYFIN_USER': 'Me'}), patch.object(app, 'urlopen') as opened:
+        with patch.object(app, 'urlopen') as opened:
             opened.return_value.__enter__.return_value.read.return_value = json.dumps([{'Name': 'me', 'Id': 'b' * 32}]).encode()
-            self.assertEqual(app.Jellyfin().user(), 'b' * 32)
+            self.assertEqual(app.Jellyfin('k', 'Me').user(), 'b' * 32)
         self.assertEqual(opened.call_args[0][0].get_header('Authorization'), 'MediaBrowser Token="k"')
 
 
@@ -153,6 +152,13 @@ class HTTPTests(unittest.TestCase):
 
     def test_unauthenticated_library_is_denied(self):
         self.assertEqual(self.request('/api/libraries')[0], 401)
+
+    def test_admin_page_requires_admin_group(self):
+        for path in ['/admin', '/api/status', '/api/vpn', '/api/jellyfin']:
+            self.assertEqual(self.request(path, headers={'Remote-User': 'guest', 'Remote-Groups': 'family'})[0], 403)
+        code, _, body = self.request('/admin', headers={'Remote-User': 'admin', 'Remote-Groups': 'admins'})
+        self.assertEqual(code, 200)
+        self.assertIn(b'Surfshark VPN', body)
 
     def test_cross_origin_write_is_denied(self):
         with patch.dict(os.environ, {'PORTAL_ORIGIN': 'https://media.home.arpa'}):
@@ -202,6 +208,42 @@ class VPNTests(unittest.TestCase):
         self.assertEqual((req.full_url, req.get_method(), req.get_header('X-api-key')), ('http://gluetun.test:8000/v1/vpn/settings', 'PUT', 'secret-key'))
         self.assertEqual(json.loads(req.data), {'openvpn': {'user': 'user1', 'password': 'pass word'}})
 
+    def test_placeholder_is_not_configured(self):
+        (self.folder / 'openvpn_user').write_text(app.PLACEHOLDER)
+        with patch.object(app, 'urlopen', side_effect=app.URLError('refused')):
+            self.assertFalse(app.VPN().status()['configured'])
+        with self.assertRaises(ValueError):
+            app.VPN().save(app.PLACEHOLDER, 'p')
+
+    def test_country_is_applied_then_kept_for_restarts(self):
+        with patch.object(app, 'urlopen') as opened:
+            opened.return_value.__enter__.return_value.read.return_value = b'ok'
+            app.VPN().set_country(' Germany ')
+        self.assertEqual(json.loads(opened.call_args[0][0].data), {'provider': {'server_selection': {'countries': ['Germany']}}})
+        self.assertEqual((self.folder / 'server_countries').read_text(), 'Germany')
+
+    def test_unknown_country_is_not_kept(self):
+        with patch.object(app, 'urlopen', side_effect=app.HTTPError('u', 400, 'bad', {}, None)):
+            with self.assertRaises(ValueError):
+                app.VPN().set_country('Atlantis')
+        for bad in ['', 'x', 'Nether/lands', 'A' * 61]:
+            with self.assertRaises(ValueError):
+                app.VPN().set_country(bad)
+        self.assertFalse((self.folder / 'server_countries').exists())
+
+    def test_jellyfin_connection_is_checked_before_saving(self):
+        with patch.object(app, 'SETTINGS', self.folder):
+            with self.assertRaises(ValueError):
+                app.Jellyfin('short', 'me').save()
+            with patch.object(app.Jellyfin, 'user', side_effect=app.UpstreamError('no')), self.assertRaises(app.UpstreamError):
+                app.Jellyfin('c' * 32, 'me').save()
+            self.assertFalse((self.folder / 'jellyfin.json').exists())
+            with patch.object(app.Jellyfin, 'user', return_value='b' * 32):
+                app.Jellyfin('c' * 32, 'me').save()
+            self.assertEqual((self.folder / 'jellyfin.json').stat().st_mode & 0o777, 0o600)
+            saved = app.Jellyfin()
+            self.assertEqual((saved.key, saved.username), ('c' * 32, 'me'))
+
     def test_save_while_vpn_is_down_waits_for_restart(self):
         with patch.object(app, 'urlopen', side_effect=app.URLError('refused')):
             self.assertIn('within a minute', app.VPN().save('u', 'p')['message'])
@@ -215,7 +257,17 @@ class VPNTests(unittest.TestCase):
 
     def test_status_when_gluetun_is_unreachable(self):
         with patch.object(app, 'urlopen', side_effect=app.URLError('refused')):
-            self.assertEqual(app.VPN().status(), {'configured': False, 'status': 'unreachable', 'ip': '', 'country': ''})
+            self.assertEqual(app.VPN().status(), {'configured': False, 'status': 'unreachable', 'ip': '', 'country': '', 'countries': []})
+
+    def test_service_status_counts_any_http_answer_as_up(self):
+        def answer(url, timeout):
+            if 'sonarr' in url:
+                raise app.URLError('down')
+            raise app.HTTPError(url, 401, 'auth', {}, None)
+        with patch.object(app, 'urlopen', side_effect=answer):
+            result = app.status()
+        self.assertFalse(result['Series (Sonarr)'])
+        self.assertTrue(result['Jellyfin'])
 
 
 if __name__ == '__main__':

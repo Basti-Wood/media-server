@@ -33,7 +33,7 @@ library, not every streaming service or release source. It does not generate dub
 translate audio, download missing tracks, or splice separately acquired audio.
 Bazarr can fetch subtitles once you configure its providers.
 
-**Jellyfin is the player.** The portal is for one Jellyfin account (`JELLYFIN_USER`).
+**Jellyfin is the player.** The portal is for one Jellyfin account (set on the admin page).
 **Use these languages** saves your preferred audio and subtitle language on that
 account, so Jellyfin picks those tracks in every title that has them. Use that same
 account in Jellyfin. Your browser remembers your language choice. Tracks you pick
@@ -53,46 +53,42 @@ cp .env.example .env
 
 Edit `.env` locally:
 
-- `MEDIA_DOMAIN`: a dedicated subdomain such as `media.home.arpa` (private LAN) or
-  `media.example.com`. Resolve it and **auth, sonarr, radarr, prowlarr, bazarr,
-  requests, downloads, jellyfin** beneath it to the server's LAN IP in your router's DNS.
-  A hosts-file entry for each name also works for initial testing.
-- `VPN_COUNTRIES`: your preferred exit country; this does not determine audio.
+- `MEDIA_DOMAIN`: a dedicated subdomain on your Cloudflare domain, such as
+  `media.example.com`.
+- `CADDY_BIND_IP`: where your cloudflared reaches Caddy on port 80. Keep
+  `127.0.0.1` if cloudflared runs on this server (outside Docker); use the server's
+  LAN IP if it runs on another machine.
+- `VPN_COUNTRIES`: default VPN exit country; change it later on the admin page.
 - `JELLYFIN_BIND_IP`: set to the server's LAN IP for TV/phone apps
   (`http://LAN-IP:8096`). It defaults to `127.0.0.1`, so Jellyfin starts restricted
   to the server itself. Do not forward it from your router.
 - `PUID` / `PGID`: the user/group owning your media folders. `TZ` defaults to
   Europe/Luxembourg.
 
-### 2. Create the password-protected account
+### 2. Start everything and create the admin account
 
 ```sh
-python3 scripts/setup.py
+./start.sh
 ```
 
-The script tells you how to generate an Argon2 password hash interactively using
-Authelia. Paste the digest locally. The script creates private, ignored config
-files and random secrets, and refuses to overwrite an existing account. It also
-creates `provision/vpn`, where the portal saves your Surfshark credentials.
+The first run asks for your admin login. It tells you how to generate an Argon2
+password hash with Authelia; paste the digest. It creates private, ignored config
+files and secrets and never overwrites an existing account. Then it builds and
+starts every service. Run it again any time; it is safe to repeat.
 
-`./start.sh` does all of this in one go: it runs the setup when needed, builds and
-starts every service, and on first start waits until you connect Surfshark on the
-portal page, then starts qBittorrent too. Run it again any time; it is safe to repeat.
+qBittorrent starts too, but stays offline until you connect Surfshark: the VPN's
+firewall blocks all its traffic. Compose prints a warning that the optional
+dependency gluetun is not healthy until then; that is expected.
 
-Validate before starting:
+### 3. Point your Cloudflare Tunnel at Caddy
 
-```sh
-docker compose config --quiet
-docker compose run --rm --no-deps authelia authelia config validate --config /config/configuration.yml
-docker compose run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-docker compose up -d --build
-```
-
-Caddy uses an **internal certificate authority** for LAN HTTPS. Copy
-`provision/caddy/data/caddy/pki/authorities/local/root.crt` from the server and
-trust that root certificate on each client device. Do not distribute its private
-key or disable TLS verification. For a real public DNS name, replace `tls internal`
-in `deploy/Caddyfile` with your preferred public certificate configuration.
+In Cloudflare Zero Trust → Networks → Tunnels → your tunnel → Public Hostnames,
+add these hostnames, each with service **HTTP** and URL `SERVER:80` (the
+`CADDY_BIND_IP` address, e.g. `localhost:80`): `media.example.com` and
+**auth, jellyfin, sonarr, radarr, prowlarr, bazarr, requests, downloads** in front
+of it (e.g. `auth.media.example.com`). Cloudflare provides HTTPS; Caddy and
+Authelia log you in. Note that Cloudflare's terms restrict streaming lots of video
+through its network; Jellyfin on your LAN (`JELLYFIN_BIND_IP`) avoids that.
 
 Visit `https://MEDIA_DOMAIN`, sign in, and tick **Remember me**. The browser session
 lasts up to 30 days, with persisted Redis storage. Without Remember Me, sessions
@@ -100,13 +96,16 @@ expire after 12 hours or 1 hour inactivity. Clearing cookies, logging out, or
 revoking sessions requires a new login. App-native accounts are still required;
 Authelia adds a shared front door, not universal single sign-on to every app.
 
-**Connect the VPN:** on the portal page, enter the username and password from
-Surfshark → VPN → Manual setup → **Credentials** (not your account email) and
-press **Connect**. The VPN starts within a minute and the page shows its public IP.
-`./start.sh` then starts qBittorrent, which waits for the VPN. Changing the credentials later reconnects
-the running VPN directly.
+**Admin page (`https://MEDIA_DOMAIN/admin`, admins only):** buttons to every app,
+which apps are up or down, the VPN state and public IP, and these settings:
 
-### 3. Connect Jellyfin and the management apps
+- **Surfshark VPN:** the username and password from Surfshark → VPN → Manual setup
+  → **Credentials** (not your account email). The VPN connects within a minute and
+  qBittorrent goes online. Changes apply to the running VPN directly.
+- **VPN country:** e.g. `Germany`; applied live and kept across restarts.
+- **Jellyfin connection:** see step 4.
+
+### 4. Connect Jellyfin and the management apps
 
 Use an SSH tunnel for initial setup if these apps are not running on your desktop:
 
@@ -121,9 +120,9 @@ online account needed), and add these libraries:
 - Movies (content type Movies): `/data/media/movies`
 - Shows (content type Shows): `/data/media/tv`
 
-Then in Jellyfin → Dashboard → API Keys, create a key. Put it in `.env` as
-`JELLYFIN_API_KEY`, set `JELLYFIN_USER` to your Jellyfin username, and run
-`docker compose up -d portal`. The key stays server-side.
+Then in Jellyfin → Dashboard → API Keys, create a key and enter it with your
+Jellyfin username on the admin page under **Jellyfin connection**. It is checked
+against Jellyfin before saving and stays server-side.
 
 The homepage links to the protected apps. Set a native strong password in each
 app as well; keep authentication required and do not enable broad LAN bypasses.
@@ -152,7 +151,7 @@ app as well; keep authentication required and do not enable broad LAN bypasses.
   connect your Arr apps. Choose a default download profile.
   Review/change the profile when requesting another audio language.
 
-### 4. Add strict acquisition profiles
+### 5. Add strict acquisition profiles
 
 Run on the server (API keys are entered at a hidden prompt):
 

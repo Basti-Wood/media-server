@@ -32,6 +32,8 @@ provision/authelia/
 provision/redis/
 provision/caddy/
 provision/gluetun/
+provision/vpn/
+provision/portal/
 backups/
 __pycache__/
 *.pyc
