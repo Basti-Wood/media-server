@@ -74,11 +74,7 @@ def vpn_files(root, owner=None):
     settings = root / 'provision/portal'
     for path in (folder, settings):
         path.mkdir(parents=True, exist_ok=True)
-        try:
-            path.chmod(0o700)
-        except PermissionError:
-            raise ValueError(f'{path.relative_to(root)} belongs to root: Docker created it because the stack started before '
-                             'setup. Fix it, then run ./start.sh again:\n  sudo chown -R "$USER": provision/vpn provision/portal') from None
+        path.chmod(0o700)
     key_file = folder / 'control.key'
     if not key_file.exists():
         with key_file.open('x') as f:
@@ -98,6 +94,17 @@ def vpn_files(root, owner=None):
             os.chown(path, *owner)
 
 
+def check_owner(root):
+    """Docker creates missing mounted folders as root when the stack starts before setup."""
+    if os.geteuid() == 0:
+        return
+    wrong = [name for name in ('provision/authelia', 'provision/vpn', 'provision/portal', 'provision/gluetun')
+             if (root / name).exists() and (root / name).stat().st_uid != os.geteuid()]
+    if wrong:
+        raise ValueError('Docker created these folders as root before setup ran. Fix them, then run ./start.sh again:\n'
+                         '  sudo chown -R "$USER": ' + ' '.join(wrong))
+
+
 def main():
     argparse.ArgumentParser(description=__doc__).parse_args()
     os.umask(0o077)
@@ -106,6 +113,7 @@ def main():
         raise SystemExit('First copy .env.example to .env and set MEDIA_DOMAIN.')
     env = read_env(envfile)
     domain = validate_domain(env.get('MEDIA_DOMAIN', ''))
+    check_owner(ROOT)
     vpn_files(ROOT, (int(env.get('PUID', 1000)), int(env.get('PGID', 1000))) if os.geteuid() == 0 else None)
     if (ROOT / 'provision/authelia/configuration.yml').exists():
         print('Authentication is already configured.')

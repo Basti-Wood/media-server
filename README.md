@@ -77,7 +77,7 @@ files and secrets and never overwrites an existing account. Then it builds and
 starts every service. Run it again any time; it is safe to repeat.
 Run it before the first `docker compose up`: otherwise Docker creates
 `provision/vpn` and `provision/portal` as root and the portal cannot save settings
-(setup then prints the `sudo chown` command that fixes it). Set `PUID`/`PGID` in
+(setup then stops before asking anything and prints the `sudo chown` command that fixes it). Set `PUID`/`PGID` in
 `.env` to your own user (`id -u`, `id -g`).
 
 qBittorrent starts too, but stays offline until you connect Surfshark: the VPN's
