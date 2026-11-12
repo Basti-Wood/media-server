@@ -1,12 +1,14 @@
 """Language selector for a single Jellyfin account, behind Caddy + Authelia.
 
 No media files, API keys or arbitrary upstream URLs are exposed to the browser.
-Jellyfin itself remains the player. Language preferences apply to JELLYFIN_USER.
+Jellyfin itself remains the player. Language preferences apply to the Jellyfin user
+set on the admin page.
 """
 import hmac
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -15,6 +17,13 @@ from urllib.request import Request, urlopen
 
 LANGUAGES = {'de': {'de', 'deu', 'ger'}, 'en': {'en', 'eng'}, 'ja': {'ja', 'jpn'}}
 NAMES = {'de': 'German', 'en': 'English', 'ja': 'Japanese'}
+PLACEHOLDER = 'not-configured'
+SETTINGS = Path(os.environ.get('SETTINGS_DIR', '/settings'))
+# Reachability only: any HTTP answer, even 401, means the app is running.
+SERVICES = {'Jellyfin': 'http://jellyfin:8096/health', 'Series (Sonarr)': 'http://sonarr:8989/ping',
+            'Movies (Radarr)': 'http://radarr:7878/ping', 'Sources (Prowlarr)': 'http://prowlarr:9696/ping',
+            'Subtitles (Bazarr)': 'http://bazarr:6767/', 'Requests (Jellyseerr)': 'http://jellyseerr:5055/api/v1/status',
+            'Downloads (qBittorrent)': 'http://gluetun:8080/', 'Login (Authelia)': 'http://authelia:9091/api/health'}
 # Jellyfin matches a preference against both ISO 639-2 forms (ger and deu).
 CODES = {'de': 'ger', 'en': 'eng', 'ja': 'jpn'}
 
@@ -86,16 +95,54 @@ def availability(item, audio, subtitle):
     return {'state': state, 'message': message, 'versions': versions}
 
 
+def write_private(path, text):
+    tmp = path.with_name(path.name + '.tmp')
+    tmp.unlink(missing_ok=True)
+    with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def up(url):
+    try:
+        with urlopen(url, timeout=3):
+            return True
+    except HTTPError:
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def status():
+    with ThreadPoolExecutor(len(SERVICES)) as pool:
+        return dict(zip(SERVICES, pool.map(up, SERVICES.values())))
+
+
 class Jellyfin:
-    def __init__(self):
+    def __init__(self, key=None, username=None):
         self.base = os.environ.get('JELLYFIN_URL', 'http://jellyfin:8096').rstrip('/')
-        self.key = os.environ.get('JELLYFIN_API_KEY', '')
-        self.username = os.environ.get('JELLYFIN_USER', '')
-        self.uid = None
+        if key is None:
+            try:
+                saved = json.loads((SETTINGS / 'jellyfin.json').read_text())
+            except (OSError, ValueError):
+                saved = {}
+            key, username = saved.get('key', ''), saved.get('user', '')
+        self.key, self.username, self.uid = key, username, None
+
+    def save(self):
+        """Check the key and user against Jellyfin, then keep them for the language page."""
+        if not re.fullmatch(r'[0-9a-f]{32}', self.key) or not 0 < len(self.username) <= 100:
+            raise ValueError('Enter a Jellyfin API key (32 characters) and your Jellyfin username.')
+        self.user()
+        try:
+            write_private(SETTINGS / 'jellyfin.json', json.dumps({'key': self.key, 'user': self.username}))
+        except OSError:
+            raise UpstreamError('Could not save. Run ./start.sh so provision/portal is created for the portal.') from None
+        return {'message': f'Connected to Jellyfin as {self.username}.'}
 
     def request(self, path, params=None, body=None):
         if not self.key or not self.username:
-            raise UpstreamError('Jellyfin connection is not configured. Add JELLYFIN_API_KEY and JELLYFIN_USER on the server.')
+            raise UpstreamError('Jellyfin is not connected yet. Open the admin page and enter its API key.')
         url = self.base + path + ('?' + urlencode(params) if params else '')
         req = Request(url, data=None if body is None else json.dumps(body).encode(), method='GET' if body is None else 'POST',
                       headers={'Authorization': f'MediaBrowser Token="{self.key}"', 'Accept': 'application/json', 'Content-Type': 'application/json'})
@@ -106,13 +153,13 @@ class Jellyfin:
                 raise UpstreamError('Jellyfin response is too large. Narrow your search.')
             return json.loads(data) if data.strip() else {}
         except (HTTPError, URLError, TimeoutError, ValueError):
-            raise UpstreamError('Jellyfin could not be reached or rejected the request. Check JELLYFIN_API_KEY and JELLYFIN_USER.') from None
+            raise UpstreamError('Jellyfin could not be reached or rejected the API key. Check the Jellyfin connection on the admin page.') from None
 
     def user(self):
         if self.uid is None:
             match = [u for u in self.request('/Users') if u.get('Name', '').lower() == self.username.lower()]
             if not match:
-                raise UpstreamError('JELLYFIN_USER was not found in Jellyfin.')
+                raise UpstreamError(f'Jellyfin has no user named {self.username}.')
             self.uid = ident(match[0]['Id'])
         return self.uid
 
@@ -175,27 +222,48 @@ class VPN:
             return response.read(65536)
 
     def status(self):
-        configured = all((self.folder / name).exists() for name in ('openvpn_user', 'openvpn_password'))
+        try:
+            configured = (self.folder / 'openvpn_user').read_text().strip() not in {'', PLACEHOLDER}
+        except OSError:
+            configured = False
         try:
             state = json.loads(self.request('/v1/vpn/status')).get('status', 'unknown')
             ip = json.loads(self.request('/v1/publicip/ip')) if state == 'running' else {}
         except (OSError, ValueError):
             state, ip = 'unreachable', {}
-        return {'configured': configured, 'status': state, 'ip': ip.get('public_ip', ''), 'country': ip.get('country', '')}
+        try:
+            countries = json.loads(self.request('/v1/vpn/settings'))['provider']['server_selection']['countries'] or []
+        except (OSError, ValueError, KeyError, TypeError):
+            countries = []
+        return {'configured': configured, 'status': state, 'ip': ip.get('public_ip', ''), 'country': ip.get('country', ''),
+                'countries': countries}
+
+    def set_country(self, country):
+        country = country.strip()
+        if not re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,59}", country):
+            raise ValueError('Enter a country name, e.g. Netherlands.')
+        try:
+            self.request('/v1/vpn/settings', {'provider': {'server_selection': {'countries': [country]}}})
+        except HTTPError:
+            raise ValueError(f'Surfshark has no servers in "{country}". Check the spelling, e.g. Netherlands.') from None
+        except OSError:
+            raise UpstreamError('The VPN is not reachable right now. Try again in a minute.') from None
+        try:
+            # Gluetun reads this file before .env, so the choice survives restarts.
+            write_private(self.folder / 'server_countries', country)
+        except OSError:
+            raise UpstreamError('Country applied, but it could not be saved for restarts.') from None
+        return {'message': f'VPN now connects through {country}.'}
 
     def save(self, username, password):
         username, password = username.strip(), password.strip()
-        if not all(0 < len(v) <= 200 and v.isprintable() for v in (username, password)):
+        if not all(0 < len(v) <= 200 and v.isprintable() for v in (username, password)) or username == PLACEHOLDER:
             raise ValueError('Enter the Surfshark manual-setup username and password.')
         try:
             for name, value in (('openvpn_user', username), ('openvpn_password', password)):
-                tmp = self.folder / (name + '.tmp')
-                tmp.unlink(missing_ok=True)
-                with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as f:
-                    f.write(value)
-                os.replace(tmp, self.folder / name)
+                write_private(self.folder / name, value)
         except OSError:
-            raise UpstreamError('Could not save the credentials. Run scripts/setup.py as the PUID user so provision/vpn is writable.') from None
+            raise UpstreamError('Could not save the credentials. Run ./start.sh so provision/vpn is created for the portal.') from None
         try:
             self.request('/v1/vpn/settings', {'openvpn': {'user': username, 'password': password}})
         except HTTPError:
@@ -203,7 +271,7 @@ class VPN:
         except URLError:
             return {'message': 'Saved. The VPN starts with these credentials within a minute.'}
         except OSError:
-            raise UpstreamError('Saved. Run scripts/setup.py, then: docker compose restart gluetun') from None
+            raise UpstreamError('Saved. Run ./start.sh, then: docker compose restart gluetun') from None
         return {'message': 'Saved. The VPN is reconnecting with these credentials.'}
 
 
@@ -242,12 +310,16 @@ class Handler(BaseHTTPRequestHandler):
             origin = os.environ.get('PORTAL_ORIGIN', '')
             if not origin or not hmac.compare_digest(self.headers.get('Origin', ''), origin) or self.headers.get('X-Media-Request') != '1':
                 return self.send(403, {'error': 'Request origin was rejected.'})
+        admin = parsed.path == '/admin' or parsed.path.startswith(('/api/status', '/api/vpn', '/api/jellyfin'))
+        if admin and 'admins' not in [g.strip() for g in self.headers.get('Remote-Groups', '').split(',')]:
+            return self.send(403, {'error': 'Only admins can open the admin page.'})
         q = parse_qs(parsed.query)
         get = lambda key, default='': q.get(key, [default])[0]
         try:
             jellyfin = Jellyfin()
-            if not write and parsed.path == '/':
-                return self.send(200, Path(__file__).with_name('index.html').read_bytes(), 'text/html; charset=utf-8')
+            if not write and parsed.path in {'/', '/admin'}:
+                page = 'admin.html' if parsed.path == '/admin' else 'index.html'
+                return self.send(200, Path(__file__).with_name(page).read_bytes(), 'text/html; charset=utf-8')
             if not write and parsed.path == '/api/config':
                 domain = os.environ.get('MEDIA_DOMAIN', '')
                 return self.send(200, {'apps': {key: f'https://{sub}.{domain}' for key, sub in
@@ -261,19 +333,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, jellyfin.items(ident(get('section')), start, get('search')))
             if not write and parsed.path == '/api/availability':
                 return self.send(200, availability(jellyfin.metadata(get('item')), get('audio', 'de'), get('subtitle', 'none')))
-            if not write and parsed.path == '/api/vpn':
-                return self.send(200, VPN().status())
-            if write and parsed.path in {'/api/select', '/api/vpn'}:
+            if not write and parsed.path == '/api/status':
+                return self.send(200, {'services': status(), 'vpn': VPN().status(),
+                                       'jellyfin': {'configured': bool(jellyfin.key), 'user': jellyfin.username}})
+            if write:
                 size = int(self.headers.get('Content-Length', '0'))
                 if size < 1 or size > 4096 or self.headers.get('Content-Type') != 'application/json':
                     raise ValueError('Invalid request body.')
                 data = json.loads(self.rfile.read(size))
-                if parsed.path == '/api/vpn':
+                if parsed.path == '/api/select':
+                    return self.send(200, jellyfin.select(ident(data['item']), data['audio'], data['subtitle'], ident(data['media'])))
+                forms = {'/api/vpn': lambda: VPN().save(str(data['username']), str(data['password'])),
+                         '/api/vpn/country': lambda: VPN().set_country(str(data['country'])),
+                         '/api/jellyfin': lambda: Jellyfin(str(data['key']).strip(), str(data['user']).strip()).save()}
+                if parsed.path in forms:
                     try:
-                        return self.send(200, VPN().save(str(data['username']), str(data['password'])))
-                    except (ValueError, KeyError, TypeError):
-                        return self.send(400, {'error': 'Enter the Surfshark manual-setup username and password.'})
-                return self.send(200, jellyfin.select(ident(data['item']), data['audio'], data['subtitle'], ident(data['media'])))
+                        return self.send(200, forms[parsed.path]())
+                    except ValueError as error:
+                        return self.send(400, {'error': str(error)})
             return self.send(404, {'error': 'Not found.'})
         except (ValueError, KeyError, TypeError, UnicodeError):
             return self.send(400, {'error': 'Invalid selection. Refresh the page and choose a listed item, language and version.'})

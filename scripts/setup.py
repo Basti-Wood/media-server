@@ -64,24 +64,33 @@ def generate(root, domain, username, digest, email):
         (root / 'content/torrents' / name).mkdir(parents=True, exist_ok=True)
 
 
+# Gluetun runs (firewall up, downloads blocked) until real Surfshark credentials replace this.
+PLACEHOLDER = 'not-configured'
+
+
 def vpn_files(root, owner=None):
-    """Folder the portal saves Surfshark credentials in, and the key it uses to apply them in Gluetun."""
+    """Folders the portal writes to: Surfshark credentials (read by Gluetun) and portal settings."""
     folder = root / 'provision/vpn'
-    folder.mkdir(parents=True, exist_ok=True)
-    folder.chmod(0o700)
+    settings = root / 'provision/portal'
+    for path in (folder, settings):
+        path.mkdir(parents=True, exist_ok=True)
+        path.chmod(0o700)
     key_file = folder / 'control.key'
     if not key_file.exists():
-        key = secrets.token_urlsafe(32)
-        auth = root / 'provision/gluetun/auth'
-        auth.mkdir(parents=True, exist_ok=True)
-        (auth / 'config.toml').write_text('[[roles]]\nname = "portal"\nauth = "apikey"\napikey = "' + key +
-            '"\nroutes = ["GET /v1/vpn/status", "PUT /v1/vpn/settings", "GET /v1/publicip/ip"]\n')
-        (auth / 'config.toml').chmod(0o600)
         with key_file.open('x') as f:
-            f.write(key)
+            f.write(secrets.token_urlsafe(32))
         key_file.chmod(0o600)
+    for name in ('openvpn_user', 'openvpn_password'):
+        if not (folder / name).exists():
+            (folder / name).write_text(PLACEHOLDER)
+            (folder / name).chmod(0o600)
+    auth = root / 'provision/gluetun/auth'
+    auth.mkdir(parents=True, exist_ok=True)
+    (auth / 'config.toml').write_text('[[roles]]\nname = "portal"\nauth = "apikey"\napikey = "' + key_file.read_text() +
+        '"\nroutes = ["GET /v1/vpn/status", "GET /v1/vpn/settings", "PUT /v1/vpn/settings", "GET /v1/publicip/ip"]\n')
+    (auth / 'config.toml').chmod(0o600)
     if owner:  # run with sudo: the portal (PUID/PGID) must still be able to write here
-        for path in (folder, key_file):
+        for path in (folder, settings, *folder.iterdir()):
             os.chown(path, *owner)
 
 
@@ -104,8 +113,7 @@ def main():
     digest = getpass.getpass('Paste the Digest value ($argon2id$…, without "Digest:"): ').strip()
     generate(ROOT, domain, username, digest, email)
     envfile.chmod(0o600)
-    print('Authentication created. Next run: docker compose config --quiet')
-    print('Then validate Authelia and Caddy as described in README.md before starting services.')
+    print('Authentication created.')
 
 
 if __name__ == '__main__':

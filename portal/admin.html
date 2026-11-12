@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>My media · Admin</title>
+<style>
+:root{color-scheme:dark;font:16px/1.5 system-ui;background:#0b1020;color:#e8edf8}body{max-width:1050px;margin:auto;padding:32px 20px}h1{font-size:clamp(28px,5vw,44px);line-height:1.1;margin-bottom:12px}h2{font-size:20px;margin:0 0 12px}p{color:#acb9d2}a{color:#a4d7ff}input,button{font:inherit;border-radius:10px;border:1px solid #46536d;padding:11px;background:#172137;color:inherit;max-width:100%}button{cursor:pointer;background:#315ed2;border-color:#5b81e3}.card{border:1px solid #293752;border-radius:14px;padding:20px;margin:14px 0}.row{display:flex;gap:12px;flex-wrap:wrap}.row input{flex:1 1 180px;min-width:0}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}.apps a{display:block;padding:12px;border-radius:10px;background:#172137;text-decoration:none;text-align:center}.ok::before,.down::before{content:'●  '}.ok::before{color:#8be6b3}.down::before{color:#ffabae}.small{font-size:14px}.error{color:#ffabae}
+</style></head><body>
+<p><a href="/">← Languages</a></p><h1>Admin</h1>
+<section class="card"><h2>Apps</h2><nav class="grid apps" id="apps" aria-label="Media apps"></nav></section>
+<section class="card"><h2>Status</h2><div class="grid" id="services" role="status">Checking…</div></section>
+<section class="card"><h2>Surfshark VPN</h2><p class="small" id="vpnstate" role="status">Checking…</p>
+<form class="row" id="vpnform"><input id="vpnuser" placeholder="Username" aria-label="Surfshark username" autocomplete="username" maxlength="200" required><input id="vpnpass" type="password" placeholder="Password" aria-label="Surfshark password" autocomplete="current-password" maxlength="200" required><button>Connect</button></form>
+<p class="small">Use Surfshark → VPN → Manual setup → Credentials, not your account email. Downloads stay blocked until the VPN is connected.</p>
+<form class="row" id="countryform"><input id="country" placeholder="Country, e.g. Netherlands" aria-label="VPN country" maxlength="60" required><button>Change country</button></form></section>
+<section class="card"><h2>Jellyfin connection</h2><p class="small" id="jfstate" role="status">Checking…</p>
+<form class="row" id="jfform"><input id="jfuser" placeholder="Jellyfin username" aria-label="Jellyfin username" autocomplete="off" maxlength="100" required><input id="jfkey" type="password" placeholder="API key" aria-label="Jellyfin API key" autocomplete="off" maxlength="32" required><button>Connect</button></form>
+<p class="small">Create the key in Jellyfin → Dashboard → API Keys. The language page applies preferences to this user.</p></section>
+<script>
+const $=id=>document.getElementById(id);
+function node(tag,text,cls){const n=document.createElement(tag);if(text)n.textContent=text;if(cls)n.className=cls;return n}
+async function api(path,body){const r=await fetch(path,body?{method:'POST',headers:{'Content-Type':'application/json','X-Media-Request':'1'},body:JSON.stringify(body)}:{});const type=r.headers.get('content-type')||'';if(!type.includes('application/json'))throw Error('Your session expired. Reload this page to sign in.');const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed.');return d}
+async function refresh(){try{const d=await api('/api/status');const v=d.vpn;$('services').replaceChildren(...Object.entries(d.services).map(([n,ok])=>node('div',n+(ok?'':' · down'),ok?'ok':'down')),node('div','VPN'+(v.status==='running'&&v.ip?'':' · not connected'),v.status==='running'&&v.ip?'ok':'down'));$('vpnstate').textContent=!v.configured?'Not connected. Enter your Surfshark credentials.':v.status==='running'?(v.ip?`Connected · public IP ${v.ip}${v.country?' · '+v.country:''}`:'Connecting…'):v.status==='unreachable'?'VPN is starting…':`VPN is ${v.status}.`;if(v.countries.length&&!$('country').value)$('country').value=v.countries.join(', ');$('jfstate').textContent=d.jellyfin.configured?`Connected as ${d.jellyfin.user}.`:'Not connected yet.';if(d.jellyfin.user&&!$('jfuser').value)$('jfuser').value=d.jellyfin.user}catch(e){$('services').textContent=e.message;$('services').className='error'}}
+function form(id,state,path,body,clear){$(id).onsubmit=async e=>{e.preventDefault();$(state).textContent='Saving…';try{$(state).textContent=(await api(path,body())).message;if(clear)$(clear).value='';setTimeout(refresh,20000)}catch(e){$(state).textContent=e.message}}}
+form('vpnform','vpnstate','/api/vpn',()=>({username:$('vpnuser').value,password:$('vpnpass').value}),'vpnpass');
+form('countryform','vpnstate','/api/vpn/country',()=>({country:$('country').value}));
+form('jfform','jfstate','/api/jellyfin',()=>({user:$('jfuser').value,key:$('jfkey').value}),'jfkey');
+(async()=>{try{const c=await api('/api/config');for(const [name,url]of Object.entries(c.apps)){const a=node('a',name);a.href=url;$('apps').append(a)}}catch{}refresh()})();
+</script></body></html>
