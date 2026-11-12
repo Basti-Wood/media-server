@@ -9,10 +9,10 @@ if [ ! -f .env ]; then
   echo 'First run: cp .env.example .env and set MEDIA_DOMAIN (see README).' >&2
   exit 1
 fi
-grep -qs media_session provision/authelia/configuration.yml && new_login= || new_login=1
 python3 scripts/setup.py
 compose up -d --build
-# A login created just now must be loaded by the already running login service.
-if [ -n "$new_login" ]; then compose restart authelia; fi
+# Compose does not notice edited config files, so load the current login and address settings.
+compose restart authelia caddy
+python3 scripts/connect_apps.py
 domain=$(sed -n 's/^MEDIA_DOMAIN=//p' .env | tr -d "\"'")
-echo "Done. Open https://$domain/admin to connect Surfshark and Jellyfin and see the status of every app."
+echo "Done. Open https://$domain/admin for the status of every app, Surfshark and the Jellyfin connection."

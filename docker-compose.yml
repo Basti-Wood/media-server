@@ -356,6 +356,8 @@ services:
       dockerfile: portal/Dockerfile
     environment:
       MEDIA_DOMAIN: ${MEDIA_DOMAIN:?Set MEDIA_DOMAIN}
+      JELLYFIN_DOMAIN: ${JELLYFIN_DOMAIN:?Set JELLYFIN_DOMAIN in .env, e.g. jf.example.com}
+      REQUESTS_DOMAIN: ${REQUESTS_DOMAIN:?Set REQUESTS_DOMAIN in .env, e.g. requests.example.com}
       JELLYFIN_URL: http://jellyfin:8096
       PORTAL_ORIGIN: https://${MEDIA_DOMAIN}
     user: ${PUID:-1000}:${PGID:-1000}
@@ -384,6 +386,8 @@ services:
     - ${CADDY_BIND_IP:-127.0.0.1}:80:80
     environment:
       MEDIA_DOMAIN: ${MEDIA_DOMAIN:?Set MEDIA_DOMAIN}
+      JELLYFIN_DOMAIN: ${JELLYFIN_DOMAIN:?Set JELLYFIN_DOMAIN in .env, e.g. jf.example.com}
+      REQUESTS_DOMAIN: ${REQUESTS_DOMAIN:?Set REQUESTS_DOMAIN in .env, e.g. requests.example.com}
     volumes:
     - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
     - ./provision/caddy/data:/data

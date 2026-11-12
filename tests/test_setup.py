@@ -83,6 +83,25 @@ class SetupTests(unittest.TestCase):
                 with patch('builtins.input', side_effect=AssertionError('asked again')):
                     setup.main()
 
+    def test_authelia_config_follows_the_template_on_every_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'deploy').mkdir()
+            (root / 'deploy/authelia.template.yml').write_text((ROOT / 'deploy/authelia.template.yml').read_text())
+            (root / 'provision/authelia').mkdir(parents=True)
+            (root / 'provision/authelia/configuration.yml').write_text('old media_session')
+            setup.write_config(root, 'media.example.com')
+            config = yaml.safe_load((root / 'provision/authelia/configuration.yml').read_text())
+            self.assertEqual(config['session']['cookies'][0]['authelia_url'], 'https://media.example.com/auth')
+            self.assertEqual(config['server']['address'], 'tcp://:9091/auth')
+
+    def test_login_check_runs_before_identity_headers_are_trusted(self):
+        caddy = (ROOT / 'deploy/Caddyfile').read_text()
+        snippet = caddy[caddy.index('(protected) {'):caddy.index('(app) {')]
+        # Outside `route`, Caddy strips the headers after forward_auth set them, so the portal saw no user.
+        self.assertLess(snippet.index('route {'), snippet.index('request_header -Remote-User'))
+        self.assertLess(snippet.index('request_header -Remote-Name'), snippet.index('forward_auth authelia'))
+
     def test_domain_injection_rejected(self):
         for value in ['localhost', 'example.com', 'x\npolicy: bypass', 'media.*.com', 'media.bad-.com']:
             with self.assertRaises(ValueError):

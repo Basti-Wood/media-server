@@ -33,6 +33,13 @@ def validate_domain(domain):
     return domain
 
 
+def write_config(root, domain):
+    """Authelia's configuration holds no users or secrets, so it is rewritten from the template every run."""
+    path = root / 'provision/authelia/configuration.yml'
+    path.write_text((root / 'deploy/authelia.template.yml').read_text().replace('${MEDIA_DOMAIN}', domain))
+    path.chmod(0o600)
+
+
 def generate(root, domain, username, digest, email):
     validate_domain(domain)
     if not re.fullmatch(r'[a-zA-Z0-9_-]{1,40}', username):
@@ -43,7 +50,7 @@ def generate(root, domain, username, digest, email):
         raise ValueError('Enter a valid email address.')
     folder = root / 'provision/authelia'
     folder.mkdir(parents=True, exist_ok=True)
-    if (folder / 'configuration.yml').exists() or (folder / 'users_database.yml').exists():
+    if (folder / 'users_database.yml').exists():
         raise ValueError('Authentication is already configured. Edit the existing files; setup will not replace users or keys.')
     folder.chmod(0o700)
     def private(name, data):
@@ -51,8 +58,7 @@ def generate(root, domain, username, digest, email):
         with path.open('x') as f:
             f.write(data)
         path.chmod(0o600)
-    config = (root / 'deploy/authelia.template.yml').read_text().replace('${MEDIA_DOMAIN}', domain)
-    private('configuration.yml', config)
+    write_config(root, domain)
     private('users_database.yml', json.dumps({'users': {username: {'displayname': username,
         'password': digest, 'email': email, 'groups': ['admins']}}}, indent=2) + '\n')
     for filename in ['session.secret', 'storage.secret', 'jwt.secret']:
@@ -118,6 +124,7 @@ def main():
     folder = ROOT / 'provision/authelia'
     try:
         if 'media_session' in (folder / 'configuration.yml').read_text():
+            write_config(ROOT, domain)
             print('Authentication is already configured.')
             return
     except OSError:

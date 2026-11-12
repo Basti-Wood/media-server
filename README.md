@@ -55,8 +55,13 @@ cp .env.example .env
 
 Edit `.env` locally:
 
-- `MEDIA_DOMAIN`: a dedicated subdomain on your Cloudflare domain, such as
-  `media.example.com`.
+- `MEDIA_DOMAIN`: the admin address, e.g. `media.example.com`. Its pages:
+  `/` languages, `/admin`, `/sonarr`, `/radarr`, `/prowlarr`, `/bazarr`,
+  `/downloads` (qBittorrent) and the login at `/auth`, all behind your login.
+- `JELLYFIN_DOMAIN` (e.g. `jf.example.com`) and `REQUESTS_DOMAIN`
+  (e.g. `requests.example.com`): Jellyfin and Jellyseerr, each with its own login,
+  so TV and phone apps can connect. They are kept off `MEDIA_DOMAIN` so a bug in
+  them cannot reach the admin apps.
 - `CADDY_BIND_IP`: where your cloudflared reaches Caddy on port 80. Keep
   `127.0.0.1` if cloudflared runs on this server (outside Docker); use the server's
   LAN IP if it runs on another machine.
@@ -82,6 +87,13 @@ Run it before the first `docker compose up`: otherwise Docker creates
 (setup then stops before asking anything and prints the `sudo chown` command that fixes it). Set `PUID`/`PGID` in
 `.env` to your own user (`id -u`, `id -g`).
 
+It also connects the apps to each other (`scripts/connect_apps.py`, safe to repeat):
+Sonarr/Radarr get their media folders and qBittorrent, Prowlarr feeds both and
+searches through the VPN, Bazarr is linked to both, qBittorrent saves to
+`/data/torrents` over the VPN only, and Jellyfin gets its Movies and Shows
+libraries once it is connected on the admin page. The admin apps use your one
+login (Authelia); they have no second password.
+
 qBittorrent starts too, but stays offline until you connect Surfshark: the VPN's
 firewall blocks all its traffic. Compose prints a warning that the optional
 dependency gluetun is not healthy until then; that is expected.
@@ -89,18 +101,15 @@ dependency gluetun is not healthy until then; that is expected.
 ### 3. Point your Cloudflare Tunnel at Caddy
 
 In Cloudflare Zero Trust → Networks → Tunnels → your tunnel → Public Hostnames,
-add these hostnames, each with service **HTTP** and URL `SERVER:80` (the
-`CADDY_BIND_IP` address, e.g. `localhost:80`): `media.example.com` and
-**auth, jellyfin, sonarr, radarr, prowlarr, bazarr, requests, downloads** in front
-of it (e.g. `auth.media.example.com`). Cloudflare provides HTTPS; Caddy and
-Authelia log you in. Note that Cloudflare's terms restrict streaming lots of video
+add your three hostnames (`MEDIA_DOMAIN`, `JELLYFIN_DOMAIN`, `REQUESTS_DOMAIN`),
+each with service **HTTP** and URL `SERVER:80` (the `CADDY_BIND_IP` address, e.g.
+`localhost:80`). Cloudflare provides HTTPS; Caddy routes each name. Note that Cloudflare's terms restrict streaming lots of video
 through its network; Jellyfin on your LAN (`JELLYFIN_BIND_IP`) avoids that.
 
 Visit `https://MEDIA_DOMAIN`, sign in, and tick **Remember me**. The browser session
 lasts up to 30 days, with persisted Redis storage. Without Remember Me, sessions
 expire after 12 hours or 1 hour inactivity. Clearing cookies, logging out, or
-revoking sessions requires a new login. App-native accounts are still required;
-Authelia adds a shared front door, not universal single sign-on to every app.
+revoking sessions requires a new login.
 
 **Admin page (`https://MEDIA_DOMAIN/admin`, admins only):** buttons to every app,
 which apps are up or down, the VPN state and public IP, and these settings:
@@ -111,51 +120,28 @@ which apps are up or down, the VPN state and public IP, and these settings:
 - **VPN country:** e.g. `Germany`; applied live and kept across restarts.
 - **Jellyfin connection:** see step 4.
 
-### 4. Connect Jellyfin and the management apps
+### 4. Connect Jellyfin, then add sources
 
-Use an SSH tunnel for initial setup if these apps are not running on your desktop:
+1. Open `https://JELLYFIN_DOMAIN`, follow the setup wizard and create your Jellyfin
+   user (no online account needed). Skip adding libraries.
+2. In Jellyfin → Dashboard → API Keys, create a key. Enter it with your Jellyfin
+   username on the admin page under **Jellyfin connection**, then run `./start.sh`
+   again: it adds the Movies and Shows libraries.
+3. In Prowlarr (`MEDIA_DOMAIN/prowlarr`), add the indexers you are allowed to use.
+   Prowlarr copies them into Sonarr and Radarr.
+4. In Jellyseerr (`https://REQUESTS_DOMAIN`), sign in with Jellyfin (URL
+   `http://jellyfin:8096`) and add Radarr and Sonarr: host `radarr` / `sonarr`, port
+   `7878` / `8989`, URL base `/radarr` / `/sonarr`, and the API keys `./start.sh`
+   printed. Choose a quality profile and the folders `/data/media/movies` and
+   `/data/media/tv`.
 
-```sh
-ssh -L 8096:127.0.0.1:8096 -L 8989:127.0.0.1:8989 -L 7878:127.0.0.1:7878 -L 9696:127.0.0.1:9696 your-server
-```
+Then request a movie or series in Jellyseerr: Radarr/Sonarr search your indexers,
+qBittorrent downloads it through the VPN to `/data/torrents`, and it is moved (as
+a hardlink) to `/data/media`, where Jellyfin shows it within a few minutes.
 
-If `JELLYFIN_BIND_IP` is your LAN IP, open that address instead. Open
-`http://localhost:8096`, follow the setup wizard to create your Jellyfin user (no
-online account needed), and add these libraries:
-
-- Movies (content type Movies): `/data/media/movies`
-- Shows (content type Shows): `/data/media/tv`
-
-Then in Jellyfin → Dashboard → API Keys, create a key and enter it with your
-Jellyfin username on the admin page under **Jellyfin connection**. It is checked
-against Jellyfin before saving and stays server-side.
-
-The homepage links to the protected apps. Set a native strong password in each
-app as well; keep authentication required and do not enable broad LAN bypasses.
-
-- **qBittorrent:** username `admin`; get the temporary password from
-  `docker compose logs qbittorrent`, then set your own password. There is no fixed
-  `adminadmin` password. Set the network interface to **tun0** in Advanced settings
-  as an additional VPN safeguard. Use `/data/torrents`, automatic management, and
-  categories `radarr` → `/data/torrents/movies`, `sonarr` → `/data/torrents/tv`.
-- **Sonarr/Radarr download client:** host **gluetun**, port **8080**, and your
-  qBittorrent credentials. The downloader shares Gluetun's network namespace.
-  Do not use the old `qbittorrent` hostname. Use the matching category above.
-- **Prowlarr:** add your permitted indexers and connect to
-  `http://sonarr:8989` and `http://radarr:7878` with their API keys. Route its
-  searches through Surfshark: Settings → General → Proxy → type **HTTP**, host
-  **gluetun**, port **8888**, keep **Bypass Proxy for Local Addresses** on.
-  (Jackett, if used: Proxy type HTTP, URL `gluetun`, port `8888`.)
-- **Sonarr/Radarr roots:** `/data/media/tv` and `/data/media/movies`. Enable
-  hardlinks instead of copies. All three containers mount `./content` at `/data`;
-  keep torrents and media on the same filesystem for hardlinks to work.
-- **Bazarr:** connect to those same Sonarr/Radarr endpoints with API keys. Create
-  profiles for full English/German subtitles (plus Japanese if wanted), assign
-  them to movies/series, and configure your subtitle providers. Missing subtitle
-  searches can then run on its schedule. Jellyfin must rescan to detect new tracks.
-- **Jellyseerr (Requests):** sign in with Jellyfin (`http://jellyfin:8096`) and
-  connect your Arr apps. Choose a default download profile.
-  Review/change the profile when requesting another audio language.
+- **Bazarr:** create profiles for full English/German subtitles (plus Japanese if
+  wanted), assign them to movies/series, and configure your subtitle providers.
+  Jellyfin must rescan to detect new tracks.
 
 ### 5. Add strict acquisition profiles
 

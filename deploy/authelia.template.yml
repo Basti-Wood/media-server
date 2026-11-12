@@ -1,5 +1,5 @@
 server:
-  address: tcp://:9091/
+  address: tcp://:9091/auth
 log:
   level: info
 authentication_backend:
@@ -10,9 +10,7 @@ authentication_backend:
 access_control:
   default_policy: deny
   rules:
-    - domain:
-        - '${MEDIA_DOMAIN}'
-        - '*.${MEDIA_DOMAIN}'
+    - domain: '${MEDIA_DOMAIN}'
       policy: one_factor
       subject: 'group:admins'
 session:
@@ -23,8 +21,8 @@ session:
   remember_me: 30d
   cookies:
     - domain: '${MEDIA_DOMAIN}'
-      authelia_url: 'https://auth.${MEDIA_DOMAIN}'
-      default_redirection_url: 'https://${MEDIA_DOMAIN}'
+      authelia_url: 'https://${MEDIA_DOMAIN}/auth'
+      default_redirection_url: 'https://${MEDIA_DOMAIN}/'
   redis:
     host: redis
     port: 6379

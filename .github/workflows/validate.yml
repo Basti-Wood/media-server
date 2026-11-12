@@ -25,7 +25,7 @@ jobs:
           # As Cloudflare Tunnel sends it: plain HTTP to Caddy, original scheme in X-Forwarded-Proto.
           status=$(curl --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 --max-time 10 --resolve media.home.arpa:80:127.0.0.1 --header 'X-Forwarded-Proto: https' --header 'Remote-User: forged' --header 'Remote-Groups: admins' --dump-header ci-auth-headers --output ci-auth-body --write-out '%{http_code}' http://media.home.arpa/admin)
           test "$status" = 302
-          grep -qi '^location: https://auth.media.home.arpa' ci-auth-headers
+          grep -qi '^location: https://media.home.arpa/auth/' ci-auth-headers
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

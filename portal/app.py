@@ -20,10 +20,10 @@ NAMES = {'de': 'German', 'en': 'English', 'ja': 'Japanese'}
 PLACEHOLDER = 'not-configured'
 SETTINGS = Path(os.environ.get('SETTINGS_DIR', '/settings'))
 # Reachability only: any HTTP answer, even 401, means the app is running.
-SERVICES = {'Jellyfin': 'http://jellyfin:8096/health', 'Series (Sonarr)': 'http://sonarr:8989/ping',
-            'Movies (Radarr)': 'http://radarr:7878/ping', 'Sources (Prowlarr)': 'http://prowlarr:9696/ping',
-            'Subtitles (Bazarr)': 'http://bazarr:6767/', 'Requests (Jellyseerr)': 'http://jellyseerr:5055/api/v1/status',
-            'Downloads (qBittorrent)': 'http://gluetun:8080/', 'Login (Authelia)': 'http://authelia:9091/api/health'}
+SERVICES = {'Jellyfin': 'http://jellyfin:8096/health', 'Series (Sonarr)': 'http://sonarr:8989/sonarr/ping',
+            'Movies (Radarr)': 'http://radarr:7878/radarr/ping', 'Sources (Prowlarr)': 'http://prowlarr:9696/prowlarr/ping',
+            'Subtitles (Bazarr)': 'http://bazarr:6767/bazarr/', 'Requests (Jellyseerr)': 'http://jellyseerr:5055/api/v1/status',
+            'Downloads (qBittorrent)': 'http://gluetun:8080/', 'Login (Authelia)': 'http://authelia:9091/auth/api/health'}
 # Jellyfin matches a preference against both ISO 639-2 forms (ger and deu).
 CODES = {'de': 'ger', 'en': 'eng', 'ja': 'jpn'}
 
@@ -205,7 +205,7 @@ class Jellyfin:
         if any((saved.get(k) or '') != (v or '') for k, v in wanted.items()):
             raise UpstreamError('Jellyfin did not confirm the language preference. Check it in Jellyfin → Settings → Playback.')
         return {'message': f"Saved as your Jellyfin preference: {NAMES[audio]} audio, {'no subtitles' if subtitle == 'none' else NAMES[subtitle] + ' subtitles'}. Jellyfin uses it for every title that has these tracks. If a title has several versions, choose {version['resolution']} in the player.",
-                'jellyfinUrl': f"https://jellyfin.{os.environ.get('MEDIA_DOMAIN', '')}/web/#/details?id={ident(item)}"}
+                'jellyfinUrl': f"https://{os.environ.get('JELLYFIN_DOMAIN', '')}/web/#/details?id={ident(item)}"}
 
 
 class VPN:
@@ -321,9 +321,11 @@ class Handler(BaseHTTPRequestHandler):
                 page = 'admin.html' if parsed.path == '/admin' else 'index.html'
                 return self.send(200, Path(__file__).with_name(page).read_bytes(), 'text/html; charset=utf-8')
             if not write and parsed.path == '/api/config':
-                domain = os.environ.get('MEDIA_DOMAIN', '')
-                return self.send(200, {'apps': {key: f'https://{sub}.{domain}' for key, sub in
-                    [('Watch', 'jellyfin'), ('Series', 'sonarr'), ('Movies', 'radarr'), ('Sources', 'prowlarr'), ('Subtitles', 'bazarr'), ('Requests', 'requests'), ('Downloads', 'downloads'), ('Account / sign out', 'auth')]}})
+                media, env = f"https://{os.environ.get('MEDIA_DOMAIN', '')}", os.environ.get
+                return self.send(200, {'apps': dict(
+                    [('Watch', f"https://{env('JELLYFIN_DOMAIN', '')}"), ('Series', f'{media}/sonarr/'), ('Movies', f'{media}/radarr/'),
+                     ('Sources', f'{media}/prowlarr/'), ('Subtitles', f'{media}/bazarr/'), ('Requests', f"https://{env('REQUESTS_DOMAIN', '')}"),
+                     ('Downloads', f'{media}/downloads/'), ('Sign out', f'{media}/auth/logout')])})
             if not write and parsed.path == '/api/libraries':
                 return self.send(200, jellyfin.libraries())
             if not write and parsed.path == '/api/items':

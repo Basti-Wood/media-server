@@ -12,57 +12,56 @@
     }
 }
 (protected) {
-    # Never accept identity headers supplied by the browser.
-    request_header -Remote-User
-    request_header -Remote-Groups
-    request_header -Remote-Email
-    request_header -Remote-Name
-    forward_auth authelia:9091 {
-        uri /api/authz/forward-auth
-        copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+    # `route` keeps this order: Caddy otherwise runs request_header after forward_auth,
+    # which removed the user that Authelia had just set.
+    route {
+        # Never accept identity headers supplied by the browser.
+        request_header -Remote-User
+        request_header -Remote-Groups
+        request_header -Remote-Email
+        request_header -Remote-Name
+        forward_auth authelia:9091 {
+            uri /auth/api/authz/forward-auth
+            copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+        }
     }
 }
-http://auth.{$MEDIA_DOMAIN} {
-    import headers
-    reverse_proxy authelia:9091
+# An admin app at media.<domain>/<name>; the app itself is set to serve under /<name>.
+(app) {
+    @{args[0]} path /{args[0]} /{args[0]}/*
+    handle @{args[0]} {
+        import protected
+        reverse_proxy {args[1]}
+    }
 }
 http://{$MEDIA_DOMAIN} {
     import headers
-    import protected
-    reverse_proxy portal:8090
+    # The login pages themselves.
+    @auth path /auth /auth/*
+    handle @auth {
+        reverse_proxy authelia:9091
+    }
+    import app sonarr sonarr:8989
+    import app radarr radarr:7878
+    import app prowlarr prowlarr:9696
+    import app bazarr bazarr:6767
+    # qBittorrent has no URL base setting, so the prefix is removed here.
+    redir /downloads /downloads/
+    handle_path /downloads/* {
+        import protected
+        reverse_proxy gluetun:8080
+    }
+    handle {
+        import protected
+        reverse_proxy portal:8090
+    }
 }
-http://jellyfin.{$MEDIA_DOMAIN} {
+# Jellyfin and Jellyseerr have their own login, so TV and phone apps can connect.
+http://{$JELLYFIN_DOMAIN} {
     import headers
-    import protected
     reverse_proxy jellyfin:8096
 }
-http://sonarr.{$MEDIA_DOMAIN} {
+http://{$REQUESTS_DOMAIN} {
     import headers
-    import protected
-    reverse_proxy sonarr:8989
-}
-http://radarr.{$MEDIA_DOMAIN} {
-    import headers
-    import protected
-    reverse_proxy radarr:7878
-}
-http://prowlarr.{$MEDIA_DOMAIN} {
-    import headers
-    import protected
-    reverse_proxy prowlarr:9696
-}
-http://bazarr.{$MEDIA_DOMAIN} {
-    import headers
-    import protected
-    reverse_proxy bazarr:6767
-}
-http://requests.{$MEDIA_DOMAIN} {
-    import headers
-    import protected
     reverse_proxy jellyseerr:5055
-}
-http://downloads.{$MEDIA_DOMAIN} {
-    import headers
-    import protected
-    reverse_proxy gluetun:8080
 }
