@@ -77,7 +77,7 @@ def main():
     parser.add_argument('app', choices=['sonarr', 'radarr'])
     parser.add_argument('--url', help='App base URL; defaults to localhost bootstrap port')
     args = parser.parse_args()
-    base = (args.url or ('http://127.0.0.1:' + ('8989' if args.app == 'sonarr' else '7878'))).rstrip('/')
+    base = (args.url or ('http://127.0.0.1:' + ('8989' if args.app == 'sonarr' else '7878') + '/' + args.app)).rstrip('/')
     u = urlsplit(base)
     if u.scheme != 'https' and u.hostname not in {'127.0.0.1', 'localhost'}:
         raise SystemExit('Use HTTPS or the local bootstrap port.')

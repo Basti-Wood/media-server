@@ -99,11 +99,11 @@ class SelectionTests(unittest.TestCase):
     def test_save_preference_and_readback(self):
         j, request = self.jellyfin(True)
         with patch.object(j, 'metadata', return_value=video()), patch.object(j, 'request', side_effect=request) as req, \
-                patch.dict(os.environ, {'MEDIA_DOMAIN': 'media.home.arpa'}):
+                patch.dict(os.environ, {'JELLYFIN_DOMAIN': 'jf.home.arpa'}):
             result = j.select(ITEM, 'de', 'en', MEDIA)
         req.assert_any_call('/Users/Configuration', {'userId': j.uid}, {'EnableNextEpisodeAutoPlay': True, 'AudioLanguagePreference': 'ger',
                             'PlayDefaultAudioTrack': False, 'SubtitleLanguagePreference': 'eng', 'SubtitleMode': 'Always'})
-        self.assertEqual(result['jellyfinUrl'], f'https://jellyfin.media.home.arpa/web/#/details?id={ITEM}')
+        self.assertEqual(result['jellyfinUrl'], f'https://jf.home.arpa/web/#/details?id={ITEM}')
         self.assertIn('German audio, English subtitles', result['message'])
 
     def test_unconfirmed_write_is_an_error(self):

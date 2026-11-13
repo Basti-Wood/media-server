@@ -55,8 +55,13 @@ cp .env.example .env
 
 Edit `.env` locally:
 
-- `MEDIA_DOMAIN`: a dedicated subdomain on your Cloudflare domain, such as
-  `media.example.com`.
+- `MEDIA_DOMAIN`: the admin address, e.g. `media.example.com`. Its pages:
+  `/` languages, `/admin`, `/sonarr`, `/radarr`, `/prowlarr`, `/bazarr`,
+  `/downloads` (qBittorrent) and the login at `/auth`, all behind your login.
+- `JELLYFIN_DOMAIN` (e.g. `jf.example.com`) and `REQUESTS_DOMAIN`
+  (e.g. `requests.example.com`): Jellyfin and Jellyseerr, each with its own login,
+  so TV and phone apps can connect. They are kept off `MEDIA_DOMAIN` so a bug in
+  them cannot reach the admin apps.
 - `CADDY_BIND_IP`: where your cloudflared reaches Caddy on port 80. Keep
   `127.0.0.1` if cloudflared runs on this server (outside Docker); use the server's
   LAN IP if it runs on another machine.
@@ -66,6 +71,9 @@ Edit `.env` locally:
   to the server itself. Do not forward it from your router.
 - `PUID` / `PGID`: the user/group owning your media folders. `TZ` defaults to
   Europe/Luxembourg.
+- `DATA_ROOT`: the local host directory for downloads and the library (default
+  `./content`). To use another mounted disk, set an absolute path such as
+  `/mnt/media-server`. See **Local download storage** below before changing it.
 
 ### 2. Start everything and create the admin account
 
@@ -82,6 +90,15 @@ Run it before the first `docker compose up`: otherwise Docker creates
 (setup then stops before asking anything and prints the `sudo chown` command that fixes it). Set `PUID`/`PGID` in
 `.env` to your own user (`id -u`, `id -g`).
 
+It also connects the apps to each other (`scripts/connect_apps.py`, safe to repeat):
+Sonarr/Radarr get their media folders and qBittorrent, Prowlarr feeds both and
+searches through the VPN, Bazarr is linked to both, qBittorrent saves to
+`/data/torrents` over the VPN only, and Jellyfin gets its Movies and Shows
+libraries once it is connected on the admin page. The admin apps use your one
+login (Authelia); they have no second password. qBittorrent has no published host
+port: setup talks to its API inside its own container. The trusted subnet is
+computed from the actual Docker network instead of trusting every private network.
+
 qBittorrent starts too, but stays offline until you connect Surfshark: the VPN's
 firewall blocks all its traffic. Compose prints a warning that the optional
 dependency gluetun is not healthy until then; that is expected.
@@ -89,18 +106,15 @@ dependency gluetun is not healthy until then; that is expected.
 ### 3. Point your Cloudflare Tunnel at Caddy
 
 In Cloudflare Zero Trust → Networks → Tunnels → your tunnel → Public Hostnames,
-add these hostnames, each with service **HTTP** and URL `SERVER:80` (the
-`CADDY_BIND_IP` address, e.g. `localhost:80`): `media.example.com` and
-**auth, jellyfin, sonarr, radarr, prowlarr, bazarr, requests, downloads** in front
-of it (e.g. `auth.media.example.com`). Cloudflare provides HTTPS; Caddy and
-Authelia log you in. Note that Cloudflare's terms restrict streaming lots of video
+add your three hostnames (`MEDIA_DOMAIN`, `JELLYFIN_DOMAIN`, `REQUESTS_DOMAIN`),
+each with service **HTTP** and URL `SERVER:80` (the `CADDY_BIND_IP` address, e.g.
+`localhost:80`). Cloudflare provides HTTPS; Caddy routes each name. Note that Cloudflare's terms restrict streaming lots of video
 through its network; Jellyfin on your LAN (`JELLYFIN_BIND_IP`) avoids that.
 
 Visit `https://MEDIA_DOMAIN`, sign in, and tick **Remember me**. The browser session
 lasts up to 30 days, with persisted Redis storage. Without Remember Me, sessions
 expire after 12 hours or 1 hour inactivity. Clearing cookies, logging out, or
-revoking sessions requires a new login. App-native accounts are still required;
-Authelia adds a shared front door, not universal single sign-on to every app.
+revoking sessions requires a new login.
 
 **Admin page (`https://MEDIA_DOMAIN/admin`, admins only):** buttons to every app,
 which apps are up or down, the VPN state and public IP, and these settings:
@@ -111,51 +125,30 @@ which apps are up or down, the VPN state and public IP, and these settings:
 - **VPN country:** e.g. `Germany`; applied live and kept across restarts.
 - **Jellyfin connection:** see step 4.
 
-### 4. Connect Jellyfin and the management apps
+### 4. Connect Jellyfin, then add sources
 
-Use an SSH tunnel for initial setup if these apps are not running on your desktop:
+1. Open `https://JELLYFIN_DOMAIN`, follow the setup wizard and create your Jellyfin
+   user (no online account needed). Skip adding libraries.
+2. In Jellyfin → Dashboard → API Keys, create a key. Enter it with your Jellyfin
+   username on the admin page under **Jellyfin connection**, then run `./start.sh`
+   again: it adds the Movies and Shows libraries.
+3. In Prowlarr (`MEDIA_DOMAIN/prowlarr`), add the indexers you are allowed to use.
+   Prowlarr copies them into Sonarr and Radarr.
+4. In Jellyseerr (`https://REQUESTS_DOMAIN`), sign in with Jellyfin (URL
+   `http://jellyfin:8096`) and add Radarr and Sonarr: host `radarr` / `sonarr`, port
+   `7878` / `8989`, URL base `/radarr` / `/sonarr`, and the API keys `./start.sh`
+   printed. Choose a quality profile and the folders `/data/media/movies` and
+   `/data/media/tv`.
 
-```sh
-ssh -L 8096:127.0.0.1:8096 -L 8989:127.0.0.1:8989 -L 7878:127.0.0.1:7878 -L 9696:127.0.0.1:9696 your-server
-```
+Then request a movie or series in Jellyseerr: Radarr/Sonarr search your indexers,
+qBittorrent downloads it through the VPN to its movie/series category folder.
+Sonarr/Radarr import the completed file into `/data/media` using a hardlink when
+supported (otherwise a copy). The original stays in the torrent folder for
+seeding. Jellyfin watches the imported library, rather than incomplete downloads.
 
-If `JELLYFIN_BIND_IP` is your LAN IP, open that address instead. Open
-`http://localhost:8096`, follow the setup wizard to create your Jellyfin user (no
-online account needed), and add these libraries:
-
-- Movies (content type Movies): `/data/media/movies`
-- Shows (content type Shows): `/data/media/tv`
-
-Then in Jellyfin → Dashboard → API Keys, create a key and enter it with your
-Jellyfin username on the admin page under **Jellyfin connection**. It is checked
-against Jellyfin before saving and stays server-side.
-
-The homepage links to the protected apps. Set a native strong password in each
-app as well; keep authentication required and do not enable broad LAN bypasses.
-
-- **qBittorrent:** username `admin`; get the temporary password from
-  `docker compose logs qbittorrent`, then set your own password. There is no fixed
-  `adminadmin` password. Set the network interface to **tun0** in Advanced settings
-  as an additional VPN safeguard. Use `/data/torrents`, automatic management, and
-  categories `radarr` → `/data/torrents/movies`, `sonarr` → `/data/torrents/tv`.
-- **Sonarr/Radarr download client:** host **gluetun**, port **8080**, and your
-  qBittorrent credentials. The downloader shares Gluetun's network namespace.
-  Do not use the old `qbittorrent` hostname. Use the matching category above.
-- **Prowlarr:** add your permitted indexers and connect to
-  `http://sonarr:8989` and `http://radarr:7878` with their API keys. Route its
-  searches through Surfshark: Settings → General → Proxy → type **HTTP**, host
-  **gluetun**, port **8888**, keep **Bypass Proxy for Local Addresses** on.
-  (Jackett, if used: Proxy type HTTP, URL `gluetun`, port `8888`.)
-- **Sonarr/Radarr roots:** `/data/media/tv` and `/data/media/movies`. Enable
-  hardlinks instead of copies. All three containers mount `./content` at `/data`;
-  keep torrents and media on the same filesystem for hardlinks to work.
-- **Bazarr:** connect to those same Sonarr/Radarr endpoints with API keys. Create
-  profiles for full English/German subtitles (plus Japanese if wanted), assign
-  them to movies/series, and configure your subtitle providers. Missing subtitle
-  searches can then run on its schedule. Jellyfin must rescan to detect new tracks.
-- **Jellyseerr (Requests):** sign in with Jellyfin (`http://jellyfin:8096`) and
-  connect your Arr apps. Choose a default download profile.
-  Review/change the profile when requesting another audio language.
+- **Bazarr:** create profiles for full English/German subtitles (plus Japanese if
+  wanted), assign them to movies/series, and configure your subtitle providers.
+  Jellyfin must rescan to detect new tracks.
 
 ### 5. Add strict acquisition profiles
 
@@ -182,6 +175,63 @@ movie/episode; switching the acquisition profile can replace that file on a late
 search. Prefer dual/multi-audio media when you want several audio languages
 available immediately without replacing files.
 
+## Local download storage
+
+The bind mounts save files on **your server's disk**, not just in Docker's writable
+container layer. By default the root is `content/` beside `docker-compose.yml`.
+All downloader/import tools see the same root as `/data`; Jellyfin sees only its
+`media` subdirectory, read-only. `DATA_ROOT` may point at another local directory.
+
+| Purpose | Default host directory | Container path |
+|---|---|---|
+| Incomplete downloads | `content/torrents/incomplete/` | `/data/torrents/incomplete` |
+| Completed movie torrents | `content/torrents/movies/` | `/data/torrents/movies` |
+| Completed series torrents | `content/torrents/tv/` | `/data/torrents/tv` |
+| Jellyfin movie library | `content/media/movies/` | `/data/media/movies` |
+| Jellyfin series library | `content/media/tv/` | `/data/media/tv` |
+
+Setup creates `movies` and `tv` qBittorrent categories with explicit save paths,
+turns on automatic category management and a separate incomplete folder, and
+reads the settings back. Existing Sonarr/Radarr categories (e.g. `sonarr`) are
+retained so already queued torrents are not abandoned. Stale local client hosts
+are repaired to `gluetun:8080`; unrelated remote download clients are preserved.
+Completed Download Handling and hardlink imports are enabled in Sonarr/Radarr.
+No search, download, deletion, or replacement is triggered by running setup.
+
+Run `./start.sh` after updating. It prepares storage even on an existing install,
+checks access as the actual `PUID:PGID` inside qBittorrent, Sonarr, Radarr and
+Jellyfin, and stops with an actionable error if those users cannot access it.
+New directories are group-writable; existing ownership/ACLs are retained. Existing
+qBittorrent categories pointing elsewhere are reported for manual migration;
+if queued torrents use different default/incomplete paths, setup also stops for
+manual review. It does not silently relocate those torrents. A finished file becomes visible
+only after Sonarr/Radarr successfully import it, so check their activity queue for
+unmatched names, language/quality rejection or import errors.
+
+To inspect the actual resolved directory, free space and hardlink support:
+
+```sh
+python3 scripts/storage.py
+```
+
+Keep downloads and media on the same filesystem for hardlinks. If hardlinks are
+unavailable, setup reports it and imports may copy files, requiring extra space.
+Health checks now monitor the disk selected by `DATA_ROOT`. The configuration
+backup still excludes media and downloads; back up that disk separately.
+
+**Changing disks on an existing install:** stop the stack, mount the target disk,
+copy your existing `content/` data into the chosen directory if you want to retain
+it, set `DATA_ROOT` in `.env`, check that `PUID:PGID` can access it, then run
+`./start.sh`. Keep the old copy until the new library is verified. Changing the
+variable alone does not move files or mount a disk. Do not point two running
+stacks at the same download/configuration directories.
+
+The CI download test uses real qBittorrent and Jellyfin images with two tiny,
+owned movie/episode fixture torrents served locally. It verifies completed files
+land in the correct host directories, hardlinks work, and Jellyfin's media user
+can read the read-only library. It uses no public trackers or copyrighted media.
+This tests storage, not your live Surfshark credentials or indexer availability.
+
 ## VPN verification and outages
 
 ```sh
@@ -191,7 +241,8 @@ bash scripts/vpn-check.sh
 The public IP inside qBittorrent, and through the indexer proxy, must be a
 Surfshark exit, not your home IP.
 Gluetun's firewall stays enabled, qBittorrent has no independent network, and it
-starts only after Gluetun is healthy. A healthy Compose startup alone is not a
+may start while the VPN is still unconfigured, but its network interface is bound
+to `tun0` and Gluetun blocks internet traffic until the VPN connects. A Compose startup alone is not a
 proof against leaks: run this outage test on your actual host before downloads.
 
 1. Pause downloads and run the check above.
@@ -254,3 +305,4 @@ validation, and a portal image build using public dummy credentials. Live Jellyf
 playback, client behavior, Surfshark credentials, kill-switch operation, TLS trust
 and real release-language detection require a configured deployment and are not
 claimed by the unit tests.
+

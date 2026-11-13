@@ -11,7 +11,12 @@ services:
       TZ: ${TZ:-Europe/Luxembourg}
     volumes:
     - ./provision/jellyfin:/config
-    - ./content/media:/data/media
+    - type: bind
+      source: ${DATA_ROOT:-./content}/media
+      target: /data/media
+      read_only: true
+      bind:
+        create_host_path: false
     restart: unless-stopped
     logging:
       driver: json-file
@@ -29,7 +34,11 @@ services:
     - ./provision/.env.defaults
     volumes:
     - ./provision/radarr:/config
-    - ./content:/data
+    - type: bind
+      source: ${DATA_ROOT:-./content}
+      target: /data
+      bind:
+        create_host_path: false
     ports:
     - 127.0.0.1:7878:7878
     restart: unless-stopped
@@ -44,6 +53,7 @@ services:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       TZ: ${TZ:-Europe/Luxembourg}
+      UMASK: "002"
   sonarr:
     image: lscr.io/linuxserver/sonarr:4.0.20.3014-ls4
     container_name: sonarr
@@ -51,7 +61,11 @@ services:
     - ./provision/.env.defaults
     volumes:
     - ./provision/sonarr:/config
-    - ./content:/data
+    - type: bind
+      source: ${DATA_ROOT:-./content}
+      target: /data
+      bind:
+        create_host_path: false
     ports:
     - 127.0.0.1:8989:8989
     restart: unless-stopped
@@ -66,6 +80,7 @@ services:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       TZ: ${TZ:-Europe/Luxembourg}
+      UMASK: "002"
   lidarr:
     image: linuxserver/lidarr
     container_name: lidarr
@@ -73,7 +88,11 @@ services:
     - ./provision/.env.defaults
     volumes:
     - ./provision/lidarr:/config
-    - ./content:/data
+    - type: bind
+      source: ${DATA_ROOT:-./content}
+      target: /data
+      bind:
+        create_host_path: false
     ports:
     - 127.0.0.1:8686:8686
     restart: unless-stopped
@@ -88,6 +107,7 @@ services:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       TZ: ${TZ:-Europe/Luxembourg}
+      UMASK: "002"
     profiles:
     - extras
   prowlarr:
@@ -118,7 +138,11 @@ services:
     - ./provision/.env.defaults
     volumes:
     - ./provision/bazarr:/config
-    - ./content:/data
+    - type: bind
+      source: ${DATA_ROOT:-./content}
+      target: /data
+      bind:
+        create_host_path: false
     ports:
     - 127.0.0.1:6767:6767
     restart: unless-stopped
@@ -133,6 +157,7 @@ services:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       TZ: ${TZ:-Europe/Luxembourg}
+      UMASK: "002"
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:5.3.0_v2.1.2-ls487
     container_name: qbittorrent
@@ -140,7 +165,11 @@ services:
     - ./provision/.env.defaults
     volumes:
     - ./provision/qbittorrent:/config
-    - ./content:/data
+    - type: bind
+      source: ${DATA_ROOT:-./content}
+      target: /data
+      bind:
+        create_host_path: false
     restart: unless-stopped
     logging:
       driver: json-file
@@ -151,6 +180,7 @@ services:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       TZ: ${TZ:-Europe/Luxembourg}
+      UMASK: "002"
     network_mode: service:gluetun
     # Starts even before Surfshark is connected; Gluetun's firewall blocks all traffic until then.
     depends_on:
@@ -356,6 +386,8 @@ services:
       dockerfile: portal/Dockerfile
     environment:
       MEDIA_DOMAIN: ${MEDIA_DOMAIN:?Set MEDIA_DOMAIN}
+      JELLYFIN_DOMAIN: ${JELLYFIN_DOMAIN:?Set JELLYFIN_DOMAIN in .env, e.g. jf.example.com}
+      REQUESTS_DOMAIN: ${REQUESTS_DOMAIN:?Set REQUESTS_DOMAIN in .env, e.g. requests.example.com}
       JELLYFIN_URL: http://jellyfin:8096
       PORTAL_ORIGIN: https://${MEDIA_DOMAIN}
     user: ${PUID:-1000}:${PGID:-1000}
@@ -384,6 +416,8 @@ services:
     - ${CADDY_BIND_IP:-127.0.0.1}:80:80
     environment:
       MEDIA_DOMAIN: ${MEDIA_DOMAIN:?Set MEDIA_DOMAIN}
+      JELLYFIN_DOMAIN: ${JELLYFIN_DOMAIN:?Set JELLYFIN_DOMAIN in .env, e.g. jf.example.com}
+      REQUESTS_DOMAIN: ${REQUESTS_DOMAIN:?Set REQUESTS_DOMAIN in .env, e.g. requests.example.com}
     volumes:
     - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
     - ./provision/caddy/data:/data
@@ -440,3 +474,4 @@ networks:
   media-network: null
   auth-network:
     internal: true
+
