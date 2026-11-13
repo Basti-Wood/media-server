@@ -71,6 +71,9 @@ Edit `.env` locally:
   to the server itself. Do not forward it from your router.
 - `PUID` / `PGID`: the user/group owning your media folders. `TZ` defaults to
   Europe/Luxembourg.
+- `DATA_ROOT`: the local host directory for downloads and the library (default
+  `./content`). To use another mounted disk, set an absolute path such as
+  `/mnt/media-server`. See **Local download storage** below before changing it.
 
 ### 2. Start everything and create the admin account
 
@@ -92,7 +95,9 @@ Sonarr/Radarr get their media folders and qBittorrent, Prowlarr feeds both and
 searches through the VPN, Bazarr is linked to both, qBittorrent saves to
 `/data/torrents` over the VPN only, and Jellyfin gets its Movies and Shows
 libraries once it is connected on the admin page. The admin apps use your one
-login (Authelia); they have no second password.
+login (Authelia); they have no second password. qBittorrent has no published host
+port: setup talks to its API inside its own container. The trusted subnet is
+computed from the actual Docker network instead of trusting every private network.
 
 qBittorrent starts too, but stays offline until you connect Surfshark: the VPN's
 firewall blocks all its traffic. Compose prints a warning that the optional
@@ -136,8 +141,10 @@ which apps are up or down, the VPN state and public IP, and these settings:
    `/data/media/tv`.
 
 Then request a movie or series in Jellyseerr: Radarr/Sonarr search your indexers,
-qBittorrent downloads it through the VPN to `/data/torrents`, and it is moved (as
-a hardlink) to `/data/media`, where Jellyfin shows it within a few minutes.
+qBittorrent downloads it through the VPN to its movie/series category folder.
+Sonarr/Radarr import the completed file into `/data/media` using a hardlink when
+supported (otherwise a copy). The original stays in the torrent folder for
+seeding. Jellyfin watches the imported library, rather than incomplete downloads.
 
 - **Bazarr:** create profiles for full English/German subtitles (plus Japanese if
   wanted), assign them to movies/series, and configure your subtitle providers.
@@ -168,6 +175,62 @@ movie/episode; switching the acquisition profile can replace that file on a late
 search. Prefer dual/multi-audio media when you want several audio languages
 available immediately without replacing files.
 
+## Local download storage
+
+The bind mounts save files on **your server's disk**, not just in Docker's writable
+container layer. By default the root is `content/` beside `docker-compose.yml`.
+All downloader/import tools see the same root as `/data`; Jellyfin sees only its
+`media` subdirectory, read-only. `DATA_ROOT` may point at another local directory.
+
+| Purpose | Default host directory | Container path |
+|---|---|---|
+| Incomplete downloads | `content/torrents/incomplete/` | `/data/torrents/incomplete` |
+| Completed movie torrents | `content/torrents/movies/` | `/data/torrents/movies` |
+| Completed series torrents | `content/torrents/tv/` | `/data/torrents/tv` |
+| Jellyfin movie library | `content/media/movies/` | `/data/media/movies` |
+| Jellyfin series library | `content/media/tv/` | `/data/media/tv` |
+
+Setup creates `movies` and `tv` qBittorrent categories with explicit save paths,
+turns on automatic category management and a separate incomplete folder, and
+reads the settings back. Existing Sonarr/Radarr categories (e.g. `sonarr`) are
+retained so already queued torrents are not abandoned. Stale local client hosts
+are repaired to `gluetun:8080`; unrelated remote download clients are preserved.
+Completed Download Handling and hardlink imports are enabled in Sonarr/Radarr.
+No search, download, deletion, or replacement is triggered by running setup.
+
+Run `./start.sh` after updating. It prepares storage even on an existing install,
+checks access as the actual `PUID:PGID` inside qBittorrent, Sonarr, Radarr and
+Jellyfin, and stops with an actionable error if those users cannot access it.
+New directories are group-writable; existing ownership/ACLs are retained. Existing
+qBittorrent categories pointing elsewhere are reported for manual migration;
+setup does not silently relocate those torrents. A finished file becomes visible
+only after Sonarr/Radarr successfully import it, so check their activity queue for
+unmatched names, language/quality rejection or import errors.
+
+To inspect the actual resolved directory, free space and hardlink support:
+
+```sh
+python3 scripts/storage.py
+```
+
+Keep downloads and media on the same filesystem for hardlinks. If hardlinks are
+unavailable, setup reports it and imports may copy files, requiring extra space.
+Health checks now monitor the disk selected by `DATA_ROOT`. The configuration
+backup still excludes media and downloads; back up that disk separately.
+
+**Changing disks on an existing install:** stop the stack, mount the target disk,
+copy your existing `content/` data into the chosen directory if you want to retain
+it, set `DATA_ROOT` in `.env`, check that `PUID:PGID` can access it, then run
+`./start.sh`. Keep the old copy until the new library is verified. Changing the
+variable alone does not move files or mount a disk. Do not point two running
+stacks at the same download/configuration directories.
+
+The CI download test uses real qBittorrent and Jellyfin images with two tiny,
+owned movie/episode fixture torrents served locally. It verifies completed files
+land in the correct host directories, hardlinks work, and Jellyfin's media user
+can read the read-only library. It uses no public trackers or copyrighted media.
+This tests storage, not your live Surfshark credentials or indexer availability.
+
 ## VPN verification and outages
 
 ```sh
@@ -177,7 +240,8 @@ bash scripts/vpn-check.sh
 The public IP inside qBittorrent, and through the indexer proxy, must be a
 Surfshark exit, not your home IP.
 Gluetun's firewall stays enabled, qBittorrent has no independent network, and it
-starts only after Gluetun is healthy. A healthy Compose startup alone is not a
+may start while the VPN is still unconfigured, but its network interface is bound
+to `tun0` and Gluetun blocks internet traffic until the VPN connects. A Compose startup alone is not a
 proof against leaks: run this outage test on your actual host before downloads.
 
 1. Pause downloads and run the check above.
@@ -240,3 +304,4 @@ validation, and a portal image build using public dummy credentials. Live Jellyf
 playback, client behavior, Surfshark credentials, kill-switch operation, TLS trust
 and real release-language detection require a configured deployment and are not
 claimed by the unit tests.
+

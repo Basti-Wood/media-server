@@ -1,11 +1,14 @@
 import importlib.util
 from pathlib import Path
 import tempfile
+import os
+import sys
 import unittest
 from unittest.mock import patch
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'scripts'))
 
 
 def module(name):
@@ -69,7 +72,7 @@ class SetupTests(unittest.TestCase):
             root = Path(tmp)
             (root / 'deploy').mkdir()
             (root / 'deploy/authelia.template.yml').write_text((ROOT / 'deploy/authelia.template.yml').read_text())
-            (root / '.env').write_text('MEDIA_DOMAIN=media.example.com\n')
+            (root / '.env').write_text(f'MEDIA_DOMAIN=media.example.com\nPUID={os.geteuid()}\nPGID={os.getegid()}\n')
             folder = root / 'provision/authelia'
             folder.mkdir(parents=True)
             (folder / 'configuration.yml').write_text('# Authelia example\n')
@@ -175,9 +178,17 @@ class ComposeTests(unittest.TestCase):
             self.assertEqual(self.services[name]['profiles'], ['extras'])
 
     def test_shared_data_mount_and_least_privilege(self):
-        self.assertIn('./content:/data', self.services['qbittorrent']['volumes'])
+        for name in ('qbittorrent', 'sonarr', 'radarr', 'bazarr'):
+            mount = next(v for v in self.services[name]['volumes'] if isinstance(v, dict) and v['target'] == '/data')
+            self.assertEqual(mount['source'], '${DATA_ROOT:-./content}')
+            self.assertFalse(mount['bind']['create_host_path'])
+            self.assertEqual(self.services[name]['environment']['UMASK'], '002')
+        media = next(v for v in self.services['jellyfin']['volumes'] if isinstance(v, dict))
+        self.assertEqual(media['source'], '${DATA_ROOT:-./content}/media')
+        self.assertTrue(media['read_only'])
         self.assertNotIn('privileged', self.services['jellyfin'])
 
 
 if __name__ == '__main__':
     unittest.main()
+

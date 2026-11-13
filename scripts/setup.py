@@ -64,10 +64,6 @@ def generate(root, domain, username, digest, email):
     for filename in ['session.secret', 'storage.secret', 'jwt.secret']:
         if not (folder / filename).exists():
             private(filename, ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(64)))
-    for name in ['movies', 'tv', 'music', 'kids', 'movies favorite']:
-        (root / 'content/media' / name).mkdir(parents=True, exist_ok=True)
-    for name in ['movies', 'tv', 'music']:
-        (root / 'content/torrents' / name).mkdir(parents=True, exist_ok=True)
 
 
 # Gluetun runs (firewall up, downloads blocked) until real Surfshark credentials replace this.
@@ -120,6 +116,11 @@ def main():
     env = read_env(envfile)
     domain = validate_domain(env.get('MEDIA_DOMAIN', ''))
     check_owner(ROOT)
+    from storage import prepare
+    storage = prepare(ROOT, env)
+    print(f'Local media storage: {storage["root"]}')
+    if not storage['hardlinks']:
+        print('Hardlinks are not supported here; imports will copy files and use extra disk space.')
     vpn_files(ROOT, (int(env.get('PUID', 1000)), int(env.get('PGID', 1000))) if os.geteuid() == 0 else None)
     folder = ROOT / 'provision/authelia'
     try:
@@ -148,3 +149,4 @@ if __name__ == '__main__':
         main()
     except ValueError as error:
         raise SystemExit(str(error)) from None
+

@@ -10,13 +10,18 @@ from pathlib import Path
 import shutil
 import subprocess
 from urllib.request import Request, urlopen
+from setup import read_env
+from storage import data_root
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def inspect():
     problems = []
-    disk = shutil.disk_usage(ROOT / 'content' if (ROOT / 'content').exists() else ROOT)
+    storage = data_root(ROOT, read_env(ROOT / '.env') if (ROOT / '.env').exists() else {})
+    if not storage.is_dir():
+        problems.append(f'Local media storage is missing: {storage}')
+    disk = shutil.disk_usage(storage if storage.is_dir() else ROOT)
     if disk.free < max(10 * 1024 ** 3, disk.total * 0.1):
         problems.append('Media storage is low: less than 10 GiB or 10% free.')
     # Compose plugin (docker compose) or the standalone tool (docker-compose), whichever is installed.
@@ -51,3 +56,4 @@ if __name__ == '__main__':
                 pass
         raise SystemExit(1)
     print('Containers and disk space are healthy.')
+
