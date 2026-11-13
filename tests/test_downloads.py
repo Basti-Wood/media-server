@@ -19,6 +19,7 @@ class FakeClient:
         self.categories = copy.deepcopy(categories or {})
         self.preferences = {}
         self.writes = []
+        self.torrents = []
 
     def request(self, endpoint, data=None):
         import json
@@ -26,6 +27,8 @@ class FakeClient:
             self.writes.append((endpoint, data))
         if endpoint == 'torrents/categories':
             return self.categories
+        if endpoint == 'torrents/info':
+            return self.torrents
         if endpoint == 'app/setPreferences':
             self.preferences.update(json.loads(data['json']))
         if endpoint == 'app/preferences':
@@ -54,6 +57,14 @@ class DownloadTests(unittest.TestCase):
         client = FakeClient()
         downloads.configure(client, {'tv-sonarr': '/data/torrents/tv'})
         self.assertEqual(client.categories['tv-sonarr']['savePath'], '/data/torrents/tv')
+
+    def test_existing_torrents_are_not_relocated_by_a_path_change(self):
+        client = FakeClient()
+        client.preferences = {**downloads.PREFERENCES, 'temp_path_enabled': False}
+        client.torrents = [{'hash': 'queued', 'progress': 0.4}]
+        with self.assertRaisesRegex(downloads.DownloadError, 'Existing files were not moved'):
+            downloads.configure(client)
+        self.assertFalse(client.writes)
 
     def test_missing_readback_fails_instead_of_claiming_success(self):
         client = FakeClient()

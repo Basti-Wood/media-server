@@ -203,7 +203,8 @@ checks access as the actual `PUID:PGID` inside qBittorrent, Sonarr, Radarr and
 Jellyfin, and stops with an actionable error if those users cannot access it.
 New directories are group-writable; existing ownership/ACLs are retained. Existing
 qBittorrent categories pointing elsewhere are reported for manual migration;
-setup does not silently relocate those torrents. A finished file becomes visible
+if queued torrents use different default/incomplete paths, setup also stops for
+manual review. It does not silently relocate those torrents. A finished file becomes visible
 only after Sonarr/Radarr successfully import it, so check their activity queue for
 unmatched names, language/quality rejection or import errors.
 

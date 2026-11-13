@@ -52,6 +52,14 @@ def configure(client, categories=None):
     if conflicts:
         raise DownloadError('Existing qBittorrent categories use other save paths: ' + ', '.join(conflicts) +
                             '. Review/migrate them in qBittorrent first, then rerun ./start.sh. Existing files were not moved.')
+    before = client.request('app/preferences')
+    paths = ('save_path', 'temp_path', 'temp_path_enabled')
+    changed_paths = [k for k in paths if (before.get(k, '').rstrip('/') if k != 'temp_path_enabled'
+                                         else before.get(k)) != PREFERENCES[k]]
+    if changed_paths and client.request('torrents/info'):
+        raise DownloadError('qBittorrent already has torrents and its download/incomplete paths differ. '
+                            'Review and migrate the paths in qBittorrent first, then rerun ./start.sh. '
+                            'Existing files were not moved.')
     client.request('app/setPreferences', {'json': json.dumps(PREFERENCES)})
     for name, path in wanted.items():
         if name not in current:
